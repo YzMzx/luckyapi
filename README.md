@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/luckyapi-mark.svg" width="112" height="112" alt="LuckyAPI 标识" />
+  <img src="docs/luckyapi-logo.png" width="112" height="112" alt="LuckyAPI 标识" />
 </p>
 
 <h1 align="center">LuckyAPI</h1>
