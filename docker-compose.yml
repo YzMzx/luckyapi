@@ -1,0 +1,26 @@
+services:
+  app:
+    build: .
+    image: lucky-api:latest
+    container_name: luckydraw
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - luckydraw-data:/app/data
+    environment:
+      # 管理员密码必须在同目录 .env 中显式提供，避免使用弱默认值上线。
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      LINUXDO_CLIENT_ID: ${LINUXDO_CLIENT_ID:-}
+      LINUXDO_CLIENT_SECRET: ${LINUXDO_CLIENT_SECRET:-}
+      LINUXDO_PRIMARY_ORIGIN: ${LINUXDO_PRIMARY_ORIGIN:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  luckydraw-data:

@@ -1,0 +1,41 @@
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+# better-sqlite3 falls back to a source build when no matching prebuilt binary
+# is available, so keep the native build toolchain in the disposable stage.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json ./
+RUN corepack enable \
+    && corepack prepare pnpm@10.15.1 --activate \
+    && pnpm config set dangerously-allow-all-builds true \
+    && pnpm import \
+    && pnpm install --frozen-lockfile
+
+COPY . .
+RUN pnpm run build \
+    && pnpm prune --prod \
+    && pnpm store prune
+
+FROM node:20-slim AS runtime
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV APP_ID=self-hosted
+ENV APP_SECRET=self-hosted
+ENV DATABASE_URL=local
+ENV SQLITE_PATH=/app/data/luckydraw.db
+
+EXPOSE 3000
+VOLUME ["/app/data"]
+
+CMD ["node", "dist/boot.js"]

@@ -1,0 +1,451 @@
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=Space+Grotesk:wght@500;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* 深海军蓝 + 金 奢华游戏厅 */
+    --background: 210 42% 15%;          /* #162638 */
+    --foreground: 40 88% 92%;           /* cream #fce1b6 */
+    --card: 210 40% 18%;
+    --card-foreground: 40 88% 92%;
+    --popover: 210 42% 13%;
+    --popover-foreground: 40 88% 92%;
+    --primary: 37 30% 53%;              /* muted gold #af915f */
+    --primary-foreground: 210 42% 12%;
+    --secondary: 210 38% 22%;
+    --secondary-foreground: 40 88% 92%;
+    --muted: 210 38% 22%;
+    --muted-foreground: 208 20% 62%;
+    --accent: 43 100% 50%;              /* jackpot #FFB700 */
+    --accent-foreground: 210 42% 12%;
+    --destructive: 2 70% 60%;           /* #EF5459 */
+    --destructive-foreground: 0 0% 100%;
+    --border: 210 30% 28%;
+    --input: 210 30% 28%;
+    --ring: 43 100% 50%;
+    --radius: 0.75rem;
+    --sidebar-background: 210 42% 13%;
+    --sidebar-foreground: 40 88% 92%;
+    --sidebar-primary: 37 30% 53%;
+    --sidebar-primary-foreground: 210 42% 12%;
+    --sidebar-accent: 210 38% 22%;
+    --sidebar-accent-foreground: 40 88% 92%;
+    --sidebar-border: 210 30% 28%;
+    --sidebar-ring: 43 100% 50%;
+    --admin-surface: 210 42% 11%;
+    --admin-panel: 210 40% 15%;
+    --admin-control: 210 38% 19%;
+  }
+  .admin-light {
+    --background: 214 30% 96%;
+    --foreground: 215 35% 16%;
+    --card: 0 0% 100%;
+    --card-foreground: 215 35% 16%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 35% 16%;
+    --primary: 36 52% 42%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 214 28% 91%;
+    --secondary-foreground: 215 35% 16%;
+    --muted: 214 28% 92%;
+    --muted-foreground: 215 15% 43%;
+    --accent: 39 94% 48%;
+    --accent-foreground: 215 35% 14%;
+    --border: 214 24% 84%;
+    --input: 214 24% 84%;
+    --ring: 36 52% 42%;
+    --admin-surface: 214 30% 96%;
+    --admin-panel: 0 0% 100%;
+    --admin-control: 214 28% 94%;
+  }
+}
+
+@layer components {
+  .admin-surface { background: hsl(var(--admin-surface)); color: hsl(var(--foreground)); min-height: 100vh; }
+  .admin-panel { border: 1px solid hsl(var(--border)); border-radius: 1rem; background: hsl(var(--admin-panel)); box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+  .admin-input { border-color: hsl(var(--border)); background: hsl(var(--admin-control)); color: hsl(var(--foreground)); }
+  .admin-primary { border-radius: .65rem; background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-size: .875rem; font-weight: 800; transition: filter .15s ease, transform .15s ease; }
+  .admin-primary:hover { filter: brightness(1.08); }
+  .admin-primary:active { transform: translateY(1px); }
+  .admin-secondary { border: 1px solid hsl(var(--border)); border-radius: .65rem; background: hsl(var(--admin-control)); color: hsl(var(--muted-foreground)); font-weight: 700; }
+  .admin-secondary:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary)); }
+  .admin-status-ok { border-radius: 999px; background: rgba(0,183,125,.12); padding: .25rem .55rem; font-size: .65rem; font-weight: 800; color: #00a875; }
+  .admin-status-warn { border-radius: 999px; background: rgba(239,84,89,.12); padding: .25rem .55rem; font-size: .65rem; font-weight: 800; color: #EF5459; }
+  @media (max-width: 639px) {
+    .admin-panel { border-radius: .875rem; }
+    .admin-primary, .admin-secondary { min-height: 2.5rem; }
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    background-color: #162638;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Archivo', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    /* 中文正文不加额外字距，避免挤压或松散 */
+    letter-spacing: normal;
+    /* 移动端兜底：任何元素意外超宽都不产生整页横向滚动（clip 不破坏 sticky） */
+    overflow-x: clip;
+  }
+  .font-num {
+    font-family: 'Space Grotesk', 'Archivo', 'Noto Sans SC', system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ===== 展示大字 =====
+ * 中文粗体直接叠加 text-stroke 会让横竖笔画在 Windows/Chromium 下互相吞噬，
+ * 出现空洞、错位。改用实心金色 + 双层阴影，跨字体 fallback 更稳定。
+ */
+.text-outline {
+  color: #d4b071;
+  font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  line-height: 1.12;
+  text-shadow: 0 2px 0 rgba(68, 46, 22, 0.9), 0 0 22px rgba(175, 145, 95, 0.22);
+}
+
+/* ===== 3D 按压按钮 ===== */
+.btn-3d {
+  transform: translate(-6px, -6px);
+  box-shadow: 6px 6px 0 0 #af915f;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  /* 按钮文案永不拆字换行 */
+  white-space: nowrap;
+}
+.btn-3d:hover {
+  transform: translate(-3px, -3px);
+  box-shadow: 3px 3px 0 0 #af915f;
+}
+.btn-3d:active, .btn-3d[data-pressed="true"] {
+  transform: translate(0, 0);
+  box-shadow: 0 0 0 0 #af915f;
+}
+.btn-3d-accent {
+  box-shadow: 6px 6px 0 0 rgba(0, 0, 0, 0.55);
+}
+.btn-3d-accent:hover { box-shadow: 3px 3px 0 0 rgba(0, 0, 0, 0.55); }
+.btn-3d-accent:active { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.55); }
+
+/* ===== 排版规范 ===== */
+/* 中文区块标题：紧排、略加字距即可，不用英文式宽字距 */
+.t-section {
+  @apply text-sm font-bold tracking-wide text-[#af915f];
+}
+
+/* ===== Toast：避开吸顶导航，混合中英文自然换行 ===== */
+.sonner-toast-custom {
+  max-width: min(92vw, 26rem);
+  line-height: 1.65;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+  background: #101d2b !important;
+  color: #fce1b6 !important;
+  border: 1px solid rgba(175, 145, 95, 0.55) !important;
+  border-radius: 0.85rem !important;
+  padding: 0.9rem 1rem !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(255, 255, 255, 0.035) !important;
+  backdrop-filter: none !important;
+  opacity: 1 !important;
+}
+
+.sonner-toast-custom [data-title] {
+  color: #fff3d6 !important;
+  font-weight: 800 !important;
+}
+
+.sonner-toast-custom [data-description] {
+  margin-top: 0.2rem !important;
+  color: #c5b99f !important;
+  line-height: 1.6 !important;
+}
+
+.report-toast-success {
+  border-color: rgba(0, 183, 125, 0.7) !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.48), 0 0 24px rgba(0, 183, 125, 0.12) !important;
+}
+
+.report-toast-warning {
+  border-color: rgba(255, 183, 0, 0.75) !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.48), 0 0 24px rgba(255, 183, 0, 0.12) !important;
+}
+
+.report-toast-error {
+  border-color: rgba(239, 84, 89, 0.75) !important;
+}
+
+/* ===== 跑马灯 ===== */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee 32s linear infinite;
+}
+
+/* ===== 老虎机滚筒 ===== */
+.reel-mask {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black 22%, black 78%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, black 22%, black 78%, transparent);
+}
+.reel-track {
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+
+/* ===== 中奖渐变文字 ===== */
+@keyframes jackpot-text {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+.jackpot-gradient {
+  color: #FFB700;
+  background: linear-gradient(90deg, #FFB700, #EF5459, #EF54EA, #176EFF, #FFB700);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  line-height: 1.08;
+  animation: jackpot-text 3s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .jackpot-gradient { animation: none; }
+}
+
+/* ===== 呼吸金光 ===== */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 24px 0 rgba(255, 183, 0, 0.25); }
+  50% { box-shadow: 0 0 48px 4px rgba(255, 183, 0, 0.45); }
+}
+.glow-gold {
+  animation: glow-pulse 2.4s ease-in-out infinite;
+}
+
+/* ===== 模糊入场 ===== */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(24px); filter: blur(12px); }
+  to { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+.rise-in {
+  animation: rise-in 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.rise-in-1 { animation-delay: 80ms; }
+.rise-in-2 { animation-delay: 180ms; }
+.rise-in-3 { animation-delay: 300ms; }
+
+/* ===== 滚动条 ===== */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #162638; }
+::-webkit-scrollbar-thumb { background: #2c4258; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #af915f; }
+
+/* ===== 首页娱乐大堂 =====
+ * 深黑/酒红/祖母绿底 + 香槟金灯光；全部为 CSS 自制视觉，无外部素材。
+ */
+.lobby-hero-bg {
+  isolation: isolate;
+  background:
+    radial-gradient(62% 52% at 50% -4%, rgba(255, 183, 0, 0.12), transparent 70%),
+    radial-gradient(46% 58% at 10% 22%, rgba(120, 24, 40, 0.34), transparent 72%),
+    radial-gradient(46% 58% at 90% 26%, rgba(13, 59, 46, 0.42), transparent 72%),
+    linear-gradient(180deg, #0b1420 0%, #162638 58%, #101d2b 100%);
+}
+/* 两组超大柔光只使用 transform/opacity 缓动，避免持续重绘整块背景 */
+.lobby-aurora {
+  z-index: 0;
+  width: min(72vw, 1040px);
+  height: min(66vw, 760px);
+  border-radius: 9999px;
+  filter: blur(82px);
+  opacity: 0.34;
+  will-change: transform, opacity;
+}
+.lobby-aurora-wine {
+  left: -24%;
+  top: -36%;
+  background: radial-gradient(circle, rgba(176, 35, 70, 0.58) 0%, rgba(114, 21, 50, 0.24) 44%, transparent 72%);
+  animation: lobby-aurora-wine 22s ease-in-out infinite alternate;
+}
+.lobby-aurora-emerald {
+  right: -27%;
+  top: -28%;
+  background: radial-gradient(circle, rgba(14, 109, 81, 0.54) 0%, rgba(10, 70, 61, 0.22) 46%, transparent 73%);
+  animation: lobby-aurora-emerald 18s ease-in-out infinite alternate;
+}
+@keyframes lobby-aurora-wine {
+  0% { transform: translate3d(-3%, -2%, 0) scale(0.94); opacity: 0.26; }
+  48% { transform: translate3d(11%, 7%, 0) scale(1.06); opacity: 0.39; }
+  100% { transform: translate3d(19%, 2%, 0) scale(1.12); opacity: 0.31; }
+}
+@keyframes lobby-aurora-emerald {
+  0% { transform: translate3d(4%, -4%, 0) scale(1.04); opacity: 0.29; }
+  55% { transform: translate3d(-12%, 8%, 0) scale(0.96); opacity: 0.4; }
+  100% { transform: translate3d(-19%, 1%, 0) scale(1.09); opacity: 0.32; }
+}
+/* 细腻颗粒底纹 */
+.lobby-grain {
+  z-index: 1;
+  inset: -22px;
+  background-image: radial-gradient(rgba(232, 196, 117, 0.055) 1px, transparent 1.5px);
+  background-size: 22px 22px;
+  animation: lobby-grain-drift 28s linear infinite;
+  will-change: transform;
+}
+@keyframes lobby-grain-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(22px, 22px, 0); }
+}
+/* 拱门穹顶装饰（描边同心拱） */
+.lobby-arches { z-index: 2; }
+.lobby-arch {
+  border: 1px solid rgba(232, 196, 117, 0.16);
+  border-bottom: none;
+  border-radius: 9999px 9999px 0 0;
+  will-change: opacity, filter;
+}
+.lobby-arch-outer {
+  animation: lobby-arch-breathe 14s ease-in-out infinite;
+}
+.lobby-arch-middle {
+  opacity: 0.7;
+  animation: lobby-arch-breathe 11s ease-in-out -4s infinite;
+}
+.lobby-arch-inner {
+  opacity: 0.4;
+  animation: lobby-arch-breathe 8.5s ease-in-out -2s infinite;
+}
+@keyframes lobby-arch-breathe {
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(232, 196, 117, 0)); }
+  50% { filter: drop-shadow(0 0 10px rgba(232, 196, 117, 0.18)); opacity: 0.88; }
+}
+/* 舞台聚光灯光束 */
+.spotlight {
+  z-index: 3;
+  background: conic-gradient(from 168deg at 50% 0%, transparent 0deg, rgba(255, 231, 176, 0.07) 10deg, transparent 24deg);
+  filter: blur(2px);
+  transform-origin: 50% 0;
+  animation: lobby-spotlight-sway 14s ease-in-out infinite alternate;
+  will-change: transform, opacity;
+}
+@keyframes lobby-spotlight-sway {
+  0% { transform: rotate(-2.2deg) scaleX(0.96); opacity: 0.58; }
+  50% { opacity: 0.88; }
+  100% { transform: rotate(2.2deg) scaleX(1.04); opacity: 0.64; }
+}
+/* 稀疏浮尘：限定在两侧和下方，避免干扰标题及主操作区 */
+.lobby-dust { z-index: 4; }
+.lobby-dust i {
+  position: absolute;
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background: #ffe7b0;
+  box-shadow: 0 0 7px rgba(255, 183, 0, 0.72), 0 0 16px rgba(255, 183, 0, 0.28);
+  opacity: 0;
+  animation: lobby-dust-rise 11s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.lobby-dust i:nth-child(1) { left: 5%; bottom: 14%; animation-delay: -2s; animation-duration: 12s; }
+.lobby-dust i:nth-child(2) { left: 12%; bottom: 34%; animation-delay: -8s; animation-duration: 15s; }
+.lobby-dust i:nth-child(3) { left: 21%; bottom: 9%; animation-delay: -5s; animation-duration: 13s; }
+.lobby-dust i:nth-child(4) { left: 31%; bottom: 5%; animation-delay: -10s; animation-duration: 17s; }
+.lobby-dust i:nth-child(5) { left: 42%; bottom: 4%; animation-delay: -1s; animation-duration: 14s; }
+.lobby-dust i:nth-child(6) { right: 43%; bottom: 7%; animation-delay: -7s; animation-duration: 16s; }
+.lobby-dust i:nth-child(7) { right: 29%; bottom: 5%; animation-delay: -12s; animation-duration: 18s; }
+.lobby-dust i:nth-child(8) { right: 19%; bottom: 13%; animation-delay: -4s; animation-duration: 13s; }
+.lobby-dust i:nth-child(9) { right: 11%; bottom: 31%; animation-delay: -9s; animation-duration: 15s; }
+.lobby-dust i:nth-child(10) { right: 4%; bottom: 17%; animation-delay: -6s; animation-duration: 12s; }
+@keyframes lobby-dust-rise {
+  0%, 12% { transform: translate3d(0, 14px, 0) scale(0.55); opacity: 0; }
+  31% { opacity: 0.68; }
+  62% { transform: translate3d(10px, -27px, 0) scale(1); opacity: 0.4; }
+  88%, 100% { transform: translate3d(-5px, -58px, 0) scale(0.7); opacity: 0; }
+}
+/* 顶底渐隐让舞台自然衔接导航和下方内容 */
+.lobby-edge-fade {
+  z-index: 5;
+  background:
+    linear-gradient(180deg, rgba(11, 20, 32, 0.38) 0%, transparent 12%, transparent 80%, rgba(16, 29, 43, 0.88) 100%),
+    radial-gradient(ellipse at center, transparent 38%, rgba(7, 14, 23, 0.22) 100%);
+}
+/* 灯光扫过 */
+@keyframes light-sweep {
+  0% { transform: translateX(-140%) skewX(-18deg); }
+  60%, 100% { transform: translateX(260%) skewX(-18deg); }
+}
+.light-sweep { position: relative; overflow: hidden; }
+.light-sweep::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 38%;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255, 231, 176, 0.13), transparent);
+  animation: light-sweep 5.2s ease-in-out infinite;
+}
+/* 玻璃金属质感卡片 */
+.card-luxe {
+  background: linear-gradient(180deg, rgba(29, 49, 69, 0.82), rgba(16, 29, 43, 0.94));
+  border: 1px solid rgba(175, 145, 95, 0.32);
+  box-shadow: inset 0 1px 0 rgba(255, 231, 176, 0.08);
+  transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+}
+.card-luxe:hover {
+  transform: translateY(-4px);
+  border-color: rgba(255, 183, 0, 0.6);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.46), 0 0 26px rgba(255, 183, 0, 0.12), inset 0 1px 0 rgba(255, 231, 176, 0.12);
+}
+/* 迎宾灯牌 */
+.signboard {
+  border: 1px solid rgba(255, 183, 0, 0.4);
+  box-shadow: 0 0 22px rgba(255, 183, 0, 0.14), inset 0 0 22px rgba(255, 183, 0, 0.07);
+}
+.signboard-text {
+  color: #ffe7b0;
+  text-shadow: 0 0 10px rgba(255, 183, 0, 0.75), 0 0 30px rgba(255, 183, 0, 0.35);
+}
+/* 榜单名次徽章 */
+.rank-medal {
+  font-family: 'Space Grotesk', 'Archivo', system-ui, sans-serif;
+  background: linear-gradient(180deg, #f3d9a0, #af915f);
+  color: #241a08;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+@media (prefers-reduced-motion: reduce) {
+  .lobby-aurora,
+  .lobby-grain,
+  .lobby-arch,
+  .spotlight,
+  .lobby-dust i { animation: none; }
+  .lobby-dust { display: none; }
+  .rise-in,
+  .glow-gold { animation: none; }
+  .light-sweep::after { animation: none; }
+  .animate-marquee { animation: none; }
+  .card-luxe, .card-luxe:hover { transition: none; transform: none; }
+}
+
+@media (max-width: 639px) {
+  .lobby-aurora {
+    width: 108vw;
+    height: 84vw;
+    filter: blur(54px);
+    opacity: 0.26;
+  }
+  .lobby-aurora-wine { left: -58%; top: -9%; }
+  .lobby-aurora-emerald { right: -62%; top: 13%; }
+  .spotlight { height: 330px; opacity: 0.55; }
+  .lobby-dust i:nth-child(n+7) { display: none; }
+  .lobby-dust i { width: 2px; height: 2px; box-shadow: 0 0 6px rgba(255, 183, 0, 0.56); }
+  .lobby-edge-fade {
+    background: linear-gradient(180deg, rgba(11, 20, 32, 0.32) 0%, transparent 14%, transparent 77%, rgba(16, 29, 43, 0.92) 100%);
+  }
+}

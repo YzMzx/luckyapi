@@ -1,0 +1,65 @@
+# Dependencies and build output
+node_modules/
+dist/
+dist-ssr/
+build/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+# Logs and local runtime files
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.test-runtime/
+.vite-*.log
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.local
+*.pem
+*.key
+*.p12
+*.pfx
+*cookie*
+*session*
+
+# Databases, uploads and backups
+data/
+uploads/
+storage/
+tmp/
+temp/
+backups/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.bak
+*.backup
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Internal scaffolding metadata
+.backend-features.json
+
+# Editor and operating-system files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
