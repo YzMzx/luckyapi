@@ -439,7 +439,7 @@ export const memberRouter = createRouter({
         ranking: {
           metric: "permanent_available_balance" as const,
           label: "永久可用额度",
-          description: "按账户永久可用额度从高到低排名；未结清且未到期的临时额度不计入，同额按加入顺序排列。",
+          description: "按账户永久可用额度从高到低排名；未结清且未到期的临时额度不计入，同额按加入顺序排列。", 
         },
         total,
         page,
@@ -978,7 +978,7 @@ export const memberRouter = createRouter({
     const remaining = targetedRemaining + randomRemaining;
     const unavailableReason = quota.controls.maintenance ? "系统正在维护，暂时无法发起举报"
       : !quota.controls.modules.reporting ? "举报功能当前已由管理员关闭"
-      : quota.policy.entertainmentFrozen ? "你的娱乐权限已被冻结"
+      : (quota.policy.allFrozen || quota.policy.entertainmentFrozen) ? "你的娱乐权限已被冻结"
       : quota.rules.targetedDailyLimit + quota.rules.randomDailyLimit <= 0 && quota.cardRemaining <= 0 ? "举报功能暂未开放"
       : remaining <= 0 && quota.cardRemaining <= 0 ? "今天的举报次数已经用完，且没有可用举报卡次数"
       : quota.permanentAvailable <= 0 ? "永久可用额度必须大于 0 才能举报"

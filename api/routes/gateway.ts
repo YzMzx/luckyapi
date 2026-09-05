@@ -5,7 +5,7 @@ import { recordTx } from "../queries/ledger";
 import { debitUserBalance, expireUserCreditGrants } from "../queries/credit-grants";
 import { apiKeys, users, models, groups, upstreams, usageLogs, type Model, type User, type ApiKey, type Group } from "../../db/schema";
 import { sha256 } from "../auth";
-import { assertModuleAvailable, readUserPolicy } from "../queries/policies";
+import { assertModuleAvailable, isApiGroupFrozen, readUserPolicy } from "../queries/policies";
 import { currentBusinessDay } from "../queries/entertainment-control";
 
 /**
@@ -173,6 +173,7 @@ async function resolveCaller(req: Request): Promise<Caller | Response> {
   } else {
     group = await defaultGroup();
   }
+  if (isApiGroupFrozen(policy, group.id)) return jsonError(403, `你的 API 分组「${group.name}」权限已被冻结`, "policy_error");
   return { user: row.user, key: row.key, group };
 }
 

@@ -69,6 +69,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS sessions_token_idx ON sessions (token);
 
 CREATE TABLE IF NOT EXISTS user_policies (
   user_id INTEGER PRIMARY KEY,
+  all_frozen INTEGER NOT NULL DEFAULT 0,
+  frozen_api_group_ids TEXT NOT NULL DEFAULT '[]',
   api_frozen INTEGER NOT NULL DEFAULT 0,
   finance_frozen INTEGER NOT NULL DEFAULT 0,
   entertainment_frozen INTEGER NOT NULL DEFAULT 0,
@@ -776,6 +778,9 @@ CREATE INDEX IF NOT EXISTS tx_user_idx ON transactions (user_id, id);
 
 // 老库自动补列（SQLite ALTER 幂等迁移）
 function migrate(sqlite: InstanceType<typeof Database>) {
+  const userPolicyCols = (sqlite.prepare("PRAGMA table_info(user_policies)").all() as { name: string }[]).map((c) => c.name);
+  if (!userPolicyCols.includes("frozen_api_group_ids")) sqlite.exec("ALTER TABLE user_policies ADD COLUMN frozen_api_group_ids TEXT NOT NULL DEFAULT '[]'");
+  if (!userPolicyCols.includes("all_frozen")) sqlite.exec("ALTER TABLE user_policies ADD COLUMN all_frozen INTEGER NOT NULL DEFAULT 0");
   // A user may claim multiple times per business day, while only one unfinished
   // viewing session may exist. Preserve all historical sessions when replacing
   // the legacy one-session-per-day constraint.

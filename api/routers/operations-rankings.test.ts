@@ -45,10 +45,14 @@ describe("unified rankings and operational controls", () => {
     await admin.admin.control.update({ ...state, modules: { ...state.modules, transfer: false }, reason: "测试关闭转账" });
     await expect(user.finance.transfer({ accountId: other.linuxdoId, amount: 1, requestId: "ops-transfer-1" })).rejects.toThrow("转账功能当前已由管理员关闭");
     await admin.admin.control.update({ ...state, reason: "测试恢复转账" });
-    await admin.admin.userPolicy.update({ userId: adminUser.id, apiFrozen: false, financeFrozen: true, entertainmentFrozen: false, apiDailySpendLimit: null, apiKeyLimit: null, apiConcurrencyLimit: null, transferDailyLimit: null, lendingDailyLimit: null, outstandingBorrowLimit: null });
+    await admin.admin.userPolicy.update({ userId: adminUser.id, allFrozen: false, apiFrozen: false, financeFrozen: true, entertainmentFrozen: false, apiDailySpendLimit: null, apiKeyLimit: null, apiConcurrencyLimit: null, transferDailyLimit: null, lendingDailyLimit: null, outstandingBorrowLimit: null });
     await expect(user.finance.transfer({ accountId: other.linuxdoId, amount: 1, requestId: "ops-transfer-2" })).rejects.toThrow("金融权限已被冻结");
     const details = await admin.admin.userDetail({ userId: adminUser.id });
     expect(details.policy.financeFrozen).toBe(true);
+    await admin.admin.userPolicy.update({ userId: adminUser.id, allFrozen: true, apiFrozen: false, financeFrozen: false, entertainmentFrozen: false, apiDailySpendLimit: null, apiKeyLimit: null, apiConcurrencyLimit: null, transferDailyLimit: null, lendingDailyLimit: null, outstandingBorrowLimit: null });
+    await expect(user.finance.transfer({ accountId: other.linuxdoId, amount: 1, requestId: "ops-transfer-all-frozen" })).rejects.toThrow("金融权限已被冻结");
+    const allFrozenDetails = await admin.admin.userDetail({ userId: adminUser.id });
+    expect(allFrozenDetails.policy.allFrozen).toBe(true);
     expect((await db.select().from(schema.adminLogs)).some((row) => row.action === "更新运营控制")).toBe(true);
   });
 });

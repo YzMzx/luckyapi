@@ -44,6 +44,8 @@ export function readControlState(db: ReadDb) {
 export function readUserPolicy(db: ReadDb, userId: number) {
   return db.select().from(userPolicies).where(eq(userPolicies.userId, userId)).limit(1).get() ?? {
     userId,
+    frozenApiGroupIds: "[]",
+    allFrozen: false,
     apiFrozen: false,
     financeFrozen: false,
     entertainmentFrozen: false,
@@ -69,6 +71,18 @@ const moduleLabels: Record<ControlModule, string> = {
   slot: "老虎机", duel: "决斗", teamBattle: "战队对抗",
 };
 
+export function frozenApiGroupIds(policy: { frozenApiGroupIds?: string | null }) {
+  try {
+    const parsed = JSON.parse(policy.frozenApiGroupIds || "[]");
+    return Array.isArray(parsed) ? parsed.filter((id): id is number => Number.isInteger(id) && id > 0) : [];
+  } catch { return []; }
+}
+
+export function isApiGroupFrozen(policy: { allFrozen: boolean; apiFrozen: boolean; frozenApiGroupIds?: string | null }, groupId: number | null) {
+  if (policy.allFrozen || policy.apiFrozen) return true;
+  return groupId !== null && frozenApiGroupIds(policy).includes(groupId);
+}
+
 export function assertModuleAvailable(db: ReadDb, module: ControlModule, userId?: number) {
   const controls = readControlState(db);
   if (controls.maintenance)
@@ -78,7 +92,7 @@ export function assertModuleAvailable(db: ReadDb, module: ControlModule, userId?
   if (!userId) return;
   const policy = readUserPolicy(db, userId);
   const area = policyArea[module];
-  if ((area === "api" && policy.apiFrozen) || (area === "finance" && policy.financeFrozen) || (area === "entertainment" && policy.entertainmentFrozen))
+  if (policy.allFrozen || (area === "api" && policy.apiFrozen) || (area === "finance" && policy.financeFrozen) || (area === "entertainment" && policy.entertainmentFrozen))
     throw new TRPCError({ code: "FORBIDDEN", message: `你的${area === "api" ? " API" : area === "finance" ? "金融" : "娱乐"}权限已被冻结`, cause: "USER_POLICY_BLOCKED" });
 }
 
@@ -114,3 +128,4 @@ export function stricterLimit(globalLimit: number, userLimit: number | null) {
 export function upsertSetting(db: WriteDb, key: string, value: string) {
   db.insert(settings).values({ key, value }).onConflictDoUpdate({ target: settings.key, set: { value } }).run();
 }
+

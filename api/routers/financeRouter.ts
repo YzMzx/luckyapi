@@ -290,7 +290,7 @@ export const financeRouter = createRouter({
         if (!borrower) throw new Error("未找到借款正式玩家");
         if (borrower.id === ctx.user.id) throw new Error("不能向自己放贷");
         const borrowerPolicy = readUserPolicy(tx, borrower.id);
-        if (borrowerPolicy.financeFrozen) throw new Error("借款方金融权限已被冻结");
+        if (borrowerPolicy.allFrozen || borrowerPolicy.financeFrozen) throw new Error("借款方金融权限已被冻结");
         const day = currentBusinessDay(tx);
         const lentToday = Number(tx.select({ n: sql<number>`COALESCE(SUM(${peerLoans.principalUnits}), 0)` }).from(peerLoans).where(and(
           eq(peerLoans.lenderId, ctx.user.id), isNotNull(peerLoans.acceptedAt), gte(peerLoans.acceptedAt, day.startsAt), lt(peerLoans.acceptedAt, day.endsAt),

@@ -77,7 +77,11 @@ export const sessions = sqliteTable(
 // 单用户业务策略；null 数值表示继承全局规则，布尔冻结彼此独立。
 export const userPolicies = sqliteTable("user_policies", {
   userId: integer("user_id").primaryKey(),
+  // 一键冻结全部业务权限；登录、退出和历史只读查询不受影响。
+  allFrozen: integer("all_frozen", { mode: "boolean" }).notNull().default(false),
   apiFrozen: integer("api_frozen", { mode: "boolean" }).notNull().default(false),
+  // 仅冻结指定 API 分组；JSON 数组保存分组 ID，空数组表示不冻结具体分组。
+  frozenApiGroupIds: text("frozen_api_group_ids").notNull().default("[]"),
   financeFrozen: integer("finance_frozen", { mode: "boolean" }).notNull().default(false),
   entertainmentFrozen: integer("entertainment_frozen", { mode: "boolean" }).notNull().default(false),
   apiDailySpendLimitUnits: integer("api_daily_spend_limit_units"),
