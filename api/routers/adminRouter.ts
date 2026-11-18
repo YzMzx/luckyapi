@@ -4,6 +4,8 @@ import { TRPCError } from "@trpc/server";
 import { eq, desc, sql, and, or, isNotNull, isNull, inArray, lt, lte, gt, gte, like } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { getDb } from "../queries/connection";
+import { getLevelProgress } from "@contracts/levels";
+import { getLevelHall } from "../queries/levels";
 import { recordTx } from "../queries/ledger";
 import { creditDollarsToUnits, debitUserBalance, expireUserCreditGrants } from "../queries/credit-grants";
 import {
@@ -12,7 +14,7 @@ import {
   duelConfigs, duelRooms, duelPlayers, duelEvents, duelLedger, duelFund,
   announcements, dailySignins, signinFund, drawFund, settings,
   videoRewardFund, videoRewardLedger, videoRewardSessions,
-  peerLoans, peerLoanLedger,
+  peerLoans, peerLoanLedger, levelProfiles,
 } from "../../db/schema";
 import { createRouter, publicQuery } from "../middleware";
 import {
@@ -196,6 +198,7 @@ const signedMoneyUnits = (value: string) => {
 const supportedInviteTypes = inArray(inviteCodes.type, ["invite", "redeem"]);
 
 export const adminRouter = createRouter({
+  levels: createRouter({ hall: adminQuery.query(() => getLevelHall()) }),
   control: controlAdminRouter,
   authSettings: authSettingsAdminRouter,
   financeSettings: financeSettingsAdminRouter,
@@ -1766,15 +1769,18 @@ export const adminRouter = createRouter({
     const where = and(...conditions);
     const total = Number(tx.select({ n: sql<number>`COUNT(*)` }).from(users).where(where).get()?.n ?? 0);
     const { page, pageSize, offset } = resolvePagination(total, input.page, input.pageSize);
-    const pageUsers = tx.select().from(users).where(where)
+    const pageUsers = tx.select({ user: users, totalExp: sql<number>`COALESCE(${levelProfiles.totalExp}, 0)` })
+      .from(users).leftJoin(levelProfiles, eq(levelProfiles.userId, users.id)).where(where)
       .orderBy(desc(users.createdAt), desc(users.id)).limit(pageSize).offset(offset).all();
-    const pageUserIds = pageUsers.map((user) => user.id);
+    const pageUserIds = pageUsers.map(({ user }) => user.id);
     const sums = pageUserIds.length === 0 ? [] : tx.select({
       userId: usageLogs.userId,
       total: sql<number>`COALESCE(SUM(${usageLogs.cost}), 0)`,
     }).from(usageLogs).where(inArray(usageLogs.userId, pageUserIds)).groupBy(usageLogs.userId).all();
     const consumedByUser = new Map(sums.map((row) => [row.userId, Number(row.total)]));
-    const items = pageUsers.map((user) => ({ ...user, totalConsumed: consumedByUser.get(user.id) ?? 0 }));
+    const items = pageUsers.map(({ user, totalExp }) => ({
+      ...user, totalConsumed: consumedByUser.get(user.id) ?? 0, totalExp, siteLevel: getLevelProgress(totalExp).level,
+    }));
     return paginatedResult(items, total, page, pageSize);
   })),
 

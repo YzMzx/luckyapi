@@ -24,6 +24,7 @@ import AdminOverview from './pages/admin/Overview'
 import AdminChannels from './pages/admin/Channels'
 import AdminModels from './pages/admin/ModelsAdmin'
 import AdminUsers from './pages/admin/Users'
+import AdminLevels from './pages/admin/Levels'
 import AdminGroups from './pages/admin/Groups'
 import AdminInvites from './pages/admin/Invites'
 import AdminArena from './pages/admin/Arena'
@@ -99,6 +100,7 @@ export default function App() {
           <Route path="channels" element={<AdminChannels />} />
           <Route path="models" element={<AdminModels />} />
           <Route path="users" element={<AdminUsers />} />
+          <Route path="levels" element={<AdminLevels />} />
           <Route path="control" element={<AdminControl />} />
           <Route path="auth-settings" element={<AdminAuthSettings />} />
           <Route path="finance-settings" element={<AdminFinanceSettings />} />

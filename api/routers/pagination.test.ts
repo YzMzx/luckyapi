@@ -40,6 +40,10 @@ describe("server-side pagination", () => {
       detail: `记录 ${index}`,
     })));
 
+    const { grantExperience } = await import("../queries/levels");
+    grantExperience(created[0].id, "activity:first", 7980);
+    grantExperience(created[1].id, "activity:second", 7979);
+
     const admin = appRouter.createCaller({
       req: new Request("http://localhost/api/trpc", { headers: { cookie: "ld_admin=page-admin" } }),
       resHeaders: new Headers(),
@@ -49,20 +53,27 @@ describe("server-side pagination", () => {
       resHeaders: new Headers(),
     });
 
+    await expect(admin.admin.levels.hall()).resolves.toEqual([
+      { level: 10, rank: 1, userName: created[0].groupName, awardedAt: expect.any(Number) },
+    ]);
+    const guest = appRouter.createCaller({ req: new Request("http://localhost/api/trpc"), resHeaders: new Headers() });
+    await expect(guest.admin.levels.hall()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(member("page-member-1").admin.levels.hall()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(admin.admin.listUsersPage({ page: 1, pageSize: 101 })).rejects.toThrow();
     await expect(admin.admin.listUsersPage({ page: 999, pageSize: 2 })).resolves.toMatchObject({
       page: 3,
       pageSize: 2,
       total: 5,
       totalPages: 3,
-      items: [{ id: created[0].id }],
+      items: [{ id: created[0].id, siteLevel: 10, totalExp: 7980 }],
     });
     await expect(admin.admin.listUsersPage({ page: 1, pageSize: 20, banned: true })).resolves.toMatchObject({
       total: 1,
       totalPages: 1,
-      items: [{ id: created[4].id }],
+      items: [{ id: created[4].id, siteLevel: 1, totalExp: 0 }],
     });
     const userPage = await admin.admin.listUsersPage({ page: 1, pageSize: 20 });
+    expect(userPage.items.find((user) => user.id === created[1].id)).toMatchObject({ siteLevel: 9, totalExp: 7979 });
     const consumed = new Map(userPage.items.map((user) => [user.id, user.totalConsumed]));
     expect(consumed.get(created[0].id)).toBeCloseTo(0.0468, 8);
     expect(consumed.get(created[1].id)).toBeCloseTo(0.2, 8);
