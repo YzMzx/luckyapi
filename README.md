@@ -84,54 +84,69 @@ Hono + tRPC API
 
 ## 快速部署
 
-### 使用 Docker Compose 部署 1.0.0
+### 准备部署目录
 
-以下命令适用于已安装 Git、Docker 和 Compose v2 的 Linux 服务器。先取得与镜像版本匹配的配置，再在同一目录执行后续命令。
+在已安装 Docker 和 Compose v2 的服务器上创建部署目录。以下文件和命令均使用同一目录。
 
-```bash
-git clone --branch v1.0.0 --depth 1 https://github.com/YzMzx/luckyapi.git
-cd luckyapi
-cp .env.example .env
-chmod 600 .env
+创建 `.env`，从 [GitHub Packages](https://github.com/users/YzMzx/packages/container/package/luckyapi) 复制目标镜像的标签，填入 `IMAGE_TAG`。将 `ADMIN_PASSWORD` 设为独立的高强度密码，并运行 `chmod 600 .env` 限制文件访问。
+
+```dotenv
+IMAGE_TAG=
+ADMIN_PASSWORD=
 ```
 
-编辑 `.env`，将 `ADMIN_PASSWORD` 的示例值换成独立的高强度密码。宿主机端口默认是 `3000`，可用 `PORT` 修改。启用 Linux.do 登录时，填写 `LINUXDO_CLIENT_ID`、`LINUXDO_CLIENT_SECRET` 和站点地址 `LINUXDO_PRIMARY_ORIGIN`，并在 OAuth 应用中登记回调地址 `https://你的域名/api/oauth/callback`。
+### 配置 Docker Compose
 
-在仓库根目录创建 `docker-compose.override.yml`，指定已发布的镜像。Compose 会自动合并此文件与仓库的 [docker-compose.yml](docker-compose.yml)，沿用其中的端口、数据卷和健康检查。
+将以下模板保存为 `compose.yaml`。
 
 ```yaml
 services:
   app:
-    image: ghcr.io/yzmzx/luckyapi:1.0.0
+    image: "ghcr.io/yzmzx/luckyapi:${IMAGE_TAG:?Set IMAGE_TAG in .env}"
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - luckydraw-data:/app/data
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      LINUXDO_CLIENT_ID: ${LINUXDO_CLIENT_ID:-}
+      LINUXDO_CLIENT_SECRET: ${LINUXDO_CLIENT_SECRET:-}
+      LINUXDO_PRIMARY_ORIGIN: ${LINUXDO_PRIMARY_ORIGIN:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  luckydraw-data:
 ```
 
-校验配置、拉取镜像并启动服务：
+### 启动与验证
 
 ```bash
 docker compose config --quiet
-docker compose pull app
-docker compose up -d --no-build app
+docker compose pull
+docker compose up -d
 docker compose ps
 ```
 
-当 `app` 显示 `healthy` 后，在部署主机访问 `http://localhost:3000`，或打开 `http://localhost:3000/admin` 使用管理员账号登录。若更改了 `PORT`，请替换地址中的端口。启动异常时，运行 `docker compose logs --tail=100 app` 查看原因。对外提供服务时，请配置 HTTPS 反向代理，并正确转发 `Host`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`。
+服务显示 `healthy` 后，在部署主机访问 `http://localhost:3000`，管理入口为 `/admin`。若调整了 `PORT`，请使用对应端口。启动异常时，运行 `docker compose logs --tail=100 app` 查看日志。
+
+对外提供服务时，配置 HTTPS 反向代理并转发 `Host`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`。启用 Linux.do 登录时，在 `.env` 中填写下表的三项 OAuth 配置，并在 OAuth 应用中登记 `https://你的域名/api/oauth/callback`。
 
 ### 停止与升级
 
-SQLite 数据保存在挂载至 `/app/data` 的命名卷 `luckydraw-data` 中，实际卷名默认带 Compose 项目名前缀。`docker compose down` 会停止服务并保留数据卷；加上 `-v` 会删除数据卷。升级前先运行 `docker compose stop app`，备份整个数据卷与 `.env`。在同一部署目录将镜像标签改为目标版本，再执行上面的拉取、启动和状态检查命令。
-
-### 从源码构建
-
-需要部署本地代码时，在仅使用仓库自带 Compose 文件的情况下执行：
-
-```bash
-docker compose -f docker-compose.yml up -d --build
-```
+`docker compose down` 会保留挂载到 `/app/data` 的 SQLite 数据卷。请勿在需要保留数据时使用 `down -v`。升级前运行 `docker compose stop app`，备份整个 `luckydraw-data` 卷和 `.env`。然后在原部署目录更新 `IMAGE_TAG`，重新执行启动与验证命令。
 
 ## 关键配置
 
 | 变量 | 用途 | 必填 |
 | --- | --- | --- |
+| `IMAGE_TAG` | GitHub Packages 上已发布的镜像标签 | **是** |
 | `ADMIN_USERNAME` | 初始管理员用户名 | 否，默认 `admin` |
 | `ADMIN_PASSWORD` | 初始管理员密码 | **是** |
 | `LINUXDO_CLIENT_ID` | Linux.do OAuth Client ID | 使用 OAuth 时 |
@@ -140,7 +155,7 @@ docker compose -f docker-compose.yml up -d --build
 | `SQLITE_PATH` | SQLite 数据文件路径 | 否 |
 | `PORT` | 对外映射端口 | 否，默认 `3000` |
 
-完整示例见 [`.env.example`](.env.example)。
+应用环境变量示例见 [`.env.example`](.env.example)。
 
 ## 本地开发
 
