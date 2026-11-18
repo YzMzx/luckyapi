@@ -84,27 +84,49 @@ Hono + tRPC API
 
 ## 快速部署
 
-### 1. 准备环境变量
+### 使用 Docker Compose 部署 1.0.0
+
+以下命令适用于已安装 Git、Docker 和 Compose v2 的 Linux 服务器。先取得与镜像版本匹配的配置，再在同一目录执行后续命令。
 
 ```bash
+git clone --branch v1.0.0 --depth 1 https://github.com/YzMzx/luckyapi.git
+cd luckyapi
 cp .env.example .env
+chmod 600 .env
 ```
 
-编辑 `.env`，至少将 `ADMIN_PASSWORD` 改为独立的高强度随机密码。需要 Linux.do 登录时，再填写 OAuth 配置。
+编辑 `.env`，将 `ADMIN_PASSWORD` 的示例值换成独立的高强度密码。宿主机端口默认是 `3000`，可用 `PORT` 修改。启用 Linux.do 登录时，填写 `LINUXDO_CLIENT_ID`、`LINUXDO_CLIENT_SECRET` 和站点地址 `LINUXDO_PRIMARY_ORIGIN`，并在 OAuth 应用中登记回调地址 `https://你的域名/api/oauth/callback`。
 
-### 2. 构建并启动
+在仓库根目录创建 `docker-compose.override.yml`，指定已发布的镜像。Compose 会自动合并此文件与仓库的 [docker-compose.yml](docker-compose.yml)，沿用其中的端口、数据卷和健康检查。
+
+```yaml
+services:
+  app:
+    image: ghcr.io/yzmzx/luckyapi:1.0.0
+```
+
+校验配置、拉取镜像并启动服务：
 
 ```bash
-docker compose up -d --build
+docker compose config --quiet
+docker compose pull app
+docker compose up -d --no-build app
+docker compose ps
 ```
 
-### 3. 访问服务
+当 `app` 显示 `healthy` 后，在部署主机访问 `http://localhost:3000`，或打开 `http://localhost:3000/admin` 使用管理员账号登录。若更改了 `PORT`，请替换地址中的端口。启动异常时，运行 `docker compose logs --tail=100 app` 查看原因。对外提供服务时，请配置 HTTPS 反向代理，并正确转发 `Host`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`。
 
-- 前台：`http://localhost:3000`
-- 管理后台：`http://localhost:3000/admin`
-- OAuth 回调：`https://你的域名/api/oauth/callback`
+### 停止与升级
 
-SQLite 数据保存在 Docker 卷 `luckydraw-data` 中。生产环境请配置 HTTPS 反向代理，并正确转发 `Host`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`。
+SQLite 数据保存在挂载至 `/app/data` 的命名卷 `luckydraw-data` 中，实际卷名默认带 Compose 项目名前缀。`docker compose down` 会停止服务并保留数据卷；加上 `-v` 会删除数据卷。升级前先运行 `docker compose stop app`，备份整个数据卷与 `.env`。在同一部署目录将镜像标签改为目标版本，再执行上面的拉取、启动和状态检查命令。
+
+### 从源码构建
+
+需要部署本地代码时，在仅使用仓库自带 Compose 文件的情况下执行：
+
+```bash
+docker compose -f docker-compose.yml up -d --build
+```
 
 ## 关键配置
 
