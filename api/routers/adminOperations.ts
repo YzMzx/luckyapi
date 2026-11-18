@@ -3,14 +3,12 @@ import { desc, eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { adminLogs, apiKeys, moneyTransfers, peerLoans, sessions, transactions, upstreams, usageLogs, userPolicies, users } from "@db/schema";
 import { moneyFromUnits, unitsFromMoney } from "@contracts/finance";
-import { DEFAULT_REPORT_TAX_BASIS_POINTS } from "@contracts/report-tax";
 import { adminQuery, hashAdminPassword } from "../auth";
 import { createRouter } from "../middleware";
 import { getDb } from "../queries/connection";
 import { CONTROL_MODULES, readControlState, readFinanceRules, readUserPolicy, upsertSetting } from "../queries/policies";
 import { SETTING_KEYS } from "../settings";
 import { normalizeConfiguredOrigin } from "../routes/oauth";
-import { readReportRules } from "../queries/entertainment-control";
 
 const controlSchema = z.object({
   maintenance: z.boolean(),
@@ -19,9 +17,9 @@ const controlSchema = z.object({
 });
 const controlKeys: Record<typeof CONTROL_MODULES[number], string> = {
   login: SETTING_KEYS.loginEnabled, registration: SETTING_KEYS.registrationEnabled, api: SETTING_KEYS.apiEnabled,
-  transfer: SETTING_KEYS.transferEnabled, lending: SETTING_KEYS.lendingEnabled, reporting: SETTING_KEYS.reportingEnabled,
+  transfer: SETTING_KEYS.transferEnabled, lending: SETTING_KEYS.lendingEnabled,
   draw: SETTING_KEYS.drawModuleEnabled, signin: SETTING_KEYS.signinModuleEnabled, videoReward: SETTING_KEYS.videoRewardModuleEnabled,
-  slot: SETTING_KEYS.slotModuleEnabled, duel: SETTING_KEYS.duelModuleEnabled, teamBattle: SETTING_KEYS.teamBattleModuleEnabled,
+  slot: SETTING_KEYS.slotModuleEnabled, duel: SETTING_KEYS.duelModuleEnabled,
 };
 
 export const controlAdminRouter = createRouter({
@@ -89,57 +87,6 @@ export const financeSettingsAdminRouter = createRouter({
     for (const [key, value] of values) upsertSetting(tx, key, String(value));
     tx.insert(adminLogs).values({ action: "更新金融规则", detail: `转账费 ${input.transferFeePercent}%；新合同保存规则快照，旧合同保持不变` }).run();
     return { ok: true };
-  })),
-});
-
-export const reportSettingsAdminRouter = createRouter({
-  get: adminQuery.query(() => {
-    const raw = stored(SETTING_KEYS.reportTaxBasisPoints)?.value;
-    const parsed = Number(raw ?? DEFAULT_REPORT_TAX_BASIS_POINTS);
-    const basisPoints = Number.isInteger(parsed) && parsed >= 0 && parsed <= 10_000
-      ? parsed
-      : DEFAULT_REPORT_TAX_BASIS_POINTS;
-    const rules = readReportRules(getDb());
-    return {
-      taxPercent: basisPoints / 100,
-      targetedDailyLimit: rules.targetedDailyLimit,
-      randomDailyLimit: rules.randomDailyLimit,
-      successRatePercent: rules.successBasisPoints / 100,
-      quotaResetAt: rules.quotaResetAt,
-    };
-  }),
-  update: adminQuery.input(z.object({
-    taxPercent: z.number().min(0, "举报税率必须在 0–100 之间").max(100, "举报税率必须在 0–100 之间"),
-    targetedDailyLimit: z.number().int().min(0).max(100).optional(),
-    randomDailyLimit: z.number().int().min(0).max(100).optional(),
-    successRatePercent: z.number().min(0, "举报成功率必须在 0–100 之间").max(100, "举报成功率必须在 0–100 之间").optional(),
-  })).mutation(({ input }) => getDb().transaction((tx) => {
-    const current = readReportRules(tx);
-    const targetedDailyLimit = input.targetedDailyLimit ?? current.targetedDailyLimit;
-    const randomDailyLimit = input.randomDailyLimit ?? current.randomDailyLimit;
-    const successRatePercent = input.successRatePercent ?? current.successBasisPoints / 100;
-    const basisPoints = Math.round(input.taxPercent * 100);
-    const successBasisPoints = Math.round(successRatePercent * 100);
-    if (Math.abs(input.taxPercent * 100 - basisPoints) > 1e-8) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "举报税率最多保留两位小数" });
-    }
-    if (Math.abs(successRatePercent * 100 - successBasisPoints) > 1e-8) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "举报成功率最多保留两位小数" });
-    }
-    upsertSetting(tx, SETTING_KEYS.reportTaxBasisPoints, String(basisPoints));
-    upsertSetting(tx, SETTING_KEYS.reportTargetedDailyLimit, String(targetedDailyLimit));
-    upsertSetting(tx, SETTING_KEYS.reportRandomDailyLimit, String(randomDailyLimit));
-    upsertSetting(tx, SETTING_KEYS.reportSuccessBasisPoints, String(successBasisPoints));
-    // 保留旧总次数字段，便于旧版本短暂回滚时读取近似等价配置。
-    upsertSetting(tx, SETTING_KEYS.reportDailyLimit, String(targetedDailyLimit + randomDailyLimit));
-    tx.insert(adminLogs).values({ action: "更新举报规则", detail: `指定每日 ${targetedDailyLimit} 次；随机每日 ${randomDailyLimit} 次；成功率 ${successRatePercent.toFixed(2)}%（仅后台）；举报收益税率 ${input.taxPercent.toFixed(2)}%；已结算记录不受影响` }).run();
-    return { ok: true };
-  })),
-  resetToday: adminQuery.input(z.object({ reason: z.string().trim().min(2).max(200) })).mutation(({ input }) => getDb().transaction((tx) => {
-    const now = new Date();
-    upsertSetting(tx, SETTING_KEYS.reportQuotaResetAt, String(now.getTime()));
-    tx.insert(adminLogs).values({ action: "重置今日举报次数", detail: `全站指定/随机每日免费次数从 ${now.toISOString()} 起重新计算；不删除历史、不回滚结算、不返还已消耗举报卡；原因：${input.reason}` }).run();
-    return { ok: true, resetAt: now };
   })),
 });
 

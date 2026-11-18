@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
-import { Swords, LogIn, Loader2, Dices, Spade, Shield, RefreshCw, Trophy, Check } from "lucide-react";
+import { Swords, LogIn, Loader2, Dices, Spade, RefreshCw, Trophy, Check } from "lucide-react";
 import { useMe } from "@/hooks/useMe";
 import { SiteNav } from "@/components/SiteNav";
 import { trpc } from "@/providers/trpc";
@@ -111,7 +111,7 @@ export default function ArenaLobby() {
         </div>
 
         {/* 玩法入口 */}
-        <div className="mt-10 grid gap-4 sm:grid-cols-3">
+        <div className="mt-10 grid gap-4 sm:grid-cols-2">
           {(["dice", "blackjack"] as const).map((g) => {
             const Icon = GAME_ICON[g];
             const enabled = gameEnabled(g);
@@ -144,18 +144,6 @@ export default function ArenaLobby() {
               </button>
             );
           })}
-          <Link
-            to="/arena/team"
-            className="rise-in rounded-xl border border-border bg-[#101d2b] p-5 text-left transition-colors hover:border-[#af915f]/60"
-          >
-            <p className="flex items-center gap-2 text-sm font-bold text-[#fce1b6]">
-              <Shield className="h-4 w-4 text-[#FFB700]" /> 战队对抗
-              <span className="rounded border border-[#af915f]/30 bg-white/5 px-1.5 py-0.5 text-[10px] text-[#af915f]">进入独立大厅</span>
-            </p>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              1v1 / 3v3 / 5v5 固定队席，实时奖池赔率，首票关盘后由选手多数投票结算。
-            </p>
-          </Link>
         </div>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">

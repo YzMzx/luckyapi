@@ -5,7 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/providers/trpc";
 
-const labels = { login: "用户登录", registration: "新用户注册", api: "API 调用", transfer: "用户转账", lending: "民间借贷", reporting: "举报", draw: "一次性抽奖", signin: "每日签到", videoReward: "视频红包", slot: "老虎机", duel: "决斗场", teamBattle: "战队对抗" } as const;
+const labels = { login: "用户登录", registration: "新用户注册", api: "API 调用", transfer: "用户转账", lending: "民间借贷", draw: "一次性抽奖", signin: "每日签到", videoReward: "视频红包", slot: "老虎机", duel: "决斗场" } as const;
 type State = { maintenance: boolean; modules: Record<keyof typeof labels, boolean> };
 
 export default function Control() {

@@ -9,19 +9,16 @@ import Entertainment from './pages/Entertainment'
 import Slot from './pages/Slot'
 import Checkin from './pages/Checkin'
 import ConsoleOverview from './pages/console/Overview'
+import BadgeHall from './pages/console/BadgeHall'
 import ConsoleKeys from './pages/console/Keys'
 import ConsoleBilling from './pages/console/Billing'
 import ConsoleFinance from './pages/console/Finance'
 import ConsoleUsage from './pages/console/Usage'
 import Rankings from './pages/Rankings'
-import ReportCenter from './pages/Leaderboard'
 import Models from './pages/Models'
-import Reports from './pages/Reports'
 import ArenaLobby from './pages/arena/Lobby'
 import ArenaRoom from './pages/arena/Room'
 import ArenaLeaderboard from './pages/arena/Leaderboard'
-import TeamBattleLobby from './pages/arena/TeamBattleLobby'
-import TeamBattleRoom from './pages/arena/TeamBattleRoom'
 import AdminLayout from './components/AdminLayout'
 import AdminOverview from './pages/admin/Overview'
 import AdminChannels from './pages/admin/Channels'
@@ -30,9 +27,7 @@ import AdminUsers from './pages/admin/Users'
 import AdminGroups from './pages/admin/Groups'
 import AdminInvites from './pages/admin/Invites'
 import AdminArena from './pages/admin/Arena'
-import AdminTeamBattle from './pages/admin/TeamBattle'
 import AdminUsage from './pages/admin/Usage'
-import AdminReports from './pages/admin/Reports'
 import AdminLoans from './pages/admin/Loans'
 import AdminLogs from './pages/admin/Logs'
 import AdminControl from './pages/admin/Control'
@@ -86,6 +81,7 @@ export default function App() {
         <Route path="/checkin" element={<Checkin />} />
         <Route path="/dashboard" element={<Navigate to="/console" replace />} />
         <Route path="/console" element={<ConsoleOverview />} />
+        <Route path="/console/badges" element={<BadgeHall />} />
         <Route path="/console/keys" element={<ConsoleKeys />} />
         <Route path="/console/billing" element={<ConsoleBilling />} />
         <Route path="/console/finance" element={<ConsoleFinance />} />
@@ -95,12 +91,8 @@ export default function App() {
         <Route path="/leaderboard/borrowing" element={<Navigate to="/leaderboard?category=finance&board=borrowed&period=all&page=1" replace />} />
         <Route path="/leaderboard/lending" element={<Navigate to="/leaderboard?category=finance&board=lent&period=all&page=1" replace />} />
         <Route path="/models" element={<Models />} />
-        <Route path="/report" element={<PageErrorBoundary title="举报中心加载失败"><ReportCenter /></PageErrorBoundary>} />
-        <Route path="/reports" element={<Reports />} />
         <Route path="/arena" element={<ArenaLobby />} />
         <Route path="/arena/leaderboard" element={<ArenaLeaderboard />} />
-        <Route path="/arena/team" element={<TeamBattleLobby />} />
-        <Route path="/arena/team/:roomId" element={<TeamBattleRoom />} />
         <Route path="/arena/:roomId" element={<ArenaRoom />} />
         <Route path="/admin" element={<AdminLayout />}>
           <Route index element={<AdminOverview />} />
@@ -121,9 +113,7 @@ export default function App() {
           <Route path="entertainment/video-reward" element={<AdminEntVideoReward />} />
           <Route path="announcements" element={<AdminAnnouncements />} />
           <Route path="arena" element={<AdminArena />} />
-          <Route path="team-battle" element={<AdminTeamBattle />} />
           <Route path="usage" element={<AdminUsage />} />
-          <Route path="reports" element={<AdminReports />} />
           <Route path="loans" element={<AdminLoans />} />
           <Route path="logs" element={<AdminLogs />} />
           <Route path="settings" element={<Navigate to="/admin/control" replace />} />

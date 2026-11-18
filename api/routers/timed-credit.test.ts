@@ -67,7 +67,7 @@ describe("timed redeem credit grants", () => {
     for (const [index, person] of people.entries()) db.transaction((tx) => grants.debitUserBalance(tx, {
       userId: person.id,
       amount: 8,
-      sourceKind: index === 0 ? "duel" : "team_battle",
+      sourceKind: "duel",
       requestId: `refund-source-${index}`,
       note: "escrow debit",
       now: new Date(now),
@@ -94,7 +94,7 @@ describe("timed redeem credit grants", () => {
     const expired = db.transaction((tx) => grants.reverseUserBalanceDebit(tx, {
       userId: people[1].id,
       amount: 8,
-      sourceKind: "team_battle",
+      sourceKind: "duel",
       requestId: "refund-source-1",
       note: "expired refund",
       now: new Date(now + 61_000),

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { useMe } from "@/hooks/useMe";
 import { ConsoleLayout } from "@/components/ConsoleLayout";
+import { MemberLevel } from "@/components/MemberLevel";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,6 +42,7 @@ export default function Overview() {
   return (
     <ConsoleLayout user={user} title="概览" desc="余额、充值与接入信息">
       <div className="space-y-6">
+        <MemberLevel />
         {/* 余额卡片 */}
         <section className="grid gap-px overflow-hidden rounded-xl border border-border bg-border md:grid-cols-3">
           <div className="bg-[#101d2b] p-5 sm:p-8">
@@ -69,7 +71,7 @@ export default function Overview() {
             <div>
               <h2 className="t-section">群内名称</h2>
               <p className="mt-2 text-lg font-bold text-[#fce1b6]">{user.groupName}</p>
-              <p className="mt-1 text-xs text-muted-foreground">公开显示在可用额度榜和举报记录中，名称必须唯一。</p>
+              <p className="mt-1 text-xs text-muted-foreground">公开显示在可用额度榜中，名称必须唯一。</p>
             </div>
             {!nameEditing && <button
               type="button"
@@ -106,10 +108,10 @@ export default function Overview() {
           </form>}
         </section>
 
-        {/* 兑换码与举报卡 */}
+        {/* 兑换码 */}
         <section className="rounded-xl border border-border bg-[#101d2b] p-5 sm:p-8">
-          <h2 className="t-section">兑换码 / 举报卡</h2>
-          <p className="mt-2 text-xs text-muted-foreground">充值码增加账户额度；举报卡增加永久举报次数。限时额度会明确标注北京时间失效点，并按最早到期优先消费。</p>
+          <h2 className="t-section">兑换码</h2>
+          <p className="mt-2 text-xs text-muted-foreground">充值码增加账户额度。限时额度会明确标注北京时间失效点，并按最早到期优先消费。</p>
           <form
             className="mt-4 flex flex-wrap items-center gap-3"
             onSubmit={(e) => {
@@ -120,7 +122,7 @@ export default function Overview() {
             <Input
               value={redeemInput}
               onChange={(e) => setRedeemInput(e.target.value)}
-              placeholder="输入充值码或举报卡，如 LD-XXXXXXXX"
+              placeholder="输入充值码，如 LD-XXXXXXXX"
               className="w-full border-border bg-[#162638] font-num tracking-widest placeholder:text-muted-foreground/50 sm:w-72"
             />
             <button

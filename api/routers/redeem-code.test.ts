@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 process.env.SQLITE_PATH = join(tmpdir(), `lucky-redeem-code-${process.pid}-${Date.now()}.db`);
 
@@ -126,5 +126,16 @@ describe("redeem code modes and cleanup", () => {
     await expect(admin.admin.deleteInvite({ id: unused.id })).rejects.toThrow("不存在");
     expect(await db.select().from(codeRedemptions)).toHaveLength(8);
     expect((await db.select().from(adminLogs)).filter((log) => ["安全归档已使用码", "物理删除未使用码"].includes(log.action))).toHaveLength(4);
+
+    // Older databases may retain code types outside the current schema.
+    const [legacy] = await db.insert(inviteCodes).values({
+      code: "LD-LEGACY", type: sql`'report'`, amount: 10,
+    }).returning();
+    await expect(member1.member.redeemCode({ code: legacy.code })).rejects.toThrow("兑换码无效");
+    await db.insert(codeRedemptions).values({ codeId: legacy.id, code: legacy.code, userId: createdUsers[0].id, amount: 10 });
+    expect((await admin.admin.listInvites({ status: "all" })).map((code) => code.id)).not.toContain(legacy.id);
+    expect(await admin.admin.listInvitesPage({ page: 1, pageSize: 20, status: "all" })).toMatchObject({ total: 6 });
+    expect(await admin.admin.listCodeRedemptions({ codeId: legacy.id })).toEqual([]);
+    expect(await admin.admin.listCodeRedemptionsPage({ page: 1, pageSize: 20 })).toMatchObject({ total: 8 });
   });
 });

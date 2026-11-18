@@ -75,7 +75,7 @@ export default function Onboarding() {
                   autoComplete="nickname"
                   required
                 />
-                <p className="text-xs text-muted-foreground">1–32 个字符，将公开显示在榜单和举报记录中；注册后可在控制台修改，且不能与他人重复。</p>
+                <p className="text-xs text-muted-foreground">1–32 个字符，将公开显示在榜单中；注册后可在控制台修改，且不能与他人重复。</p>
               </div>
               {error && <p className="text-sm text-[#EF5459]">{error}</p>}
               <button

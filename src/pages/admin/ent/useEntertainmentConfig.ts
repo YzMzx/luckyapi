@@ -41,7 +41,6 @@ export function useEntertainmentConfig() {
       utils.admin.getEntertainmentControl.invalidate();
       utils.entertainment.invalidate();
       utils.member.checkinStatus.invalidate();
-      utils.member.reportQuota.invalidate();
       utils.draw.status.invalidate();
     },
     onError: (error) => toast.error(error.message),

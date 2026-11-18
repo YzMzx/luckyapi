@@ -8,7 +8,6 @@ const KINDS = [
   { v: "", label: "全部" },
   { v: "draw", label: "抽奖" },
   { v: "checkin", label: "签到" },
-  { v: "report", label: "举报" },
   { v: "redeem", label: "兑换" },
   { v: "credit_expire", label: "限时到期" },
   { v: "adjust", label: "调整" },
@@ -16,11 +15,10 @@ const KINDS = [
   { v: "duel", label: "决斗" },
 ] as const;
 
-const KIND_LABEL: Record<string, string> = { draw: "抽奖", checkin: "签到", report: "举报", redeem: "兑换", credit_expire: "限时额度到期", adjust: "调整", usage: "调用", duel: "决斗" };
+const KIND_LABEL: Record<string, string> = { draw: "抽奖", checkin: "签到", redeem: "兑换", credit_expire: "限时额度到期", adjust: "调整", usage: "调用", duel: "决斗" };
 const KIND_STYLE: Record<string, string> = {
   draw: "bg-[#FFB700]/15 text-[#FFB700]",
   checkin: "bg-[#35e0c8]/15 text-[#35e0c8]",
-  report: "bg-[#f45b5b]/15 text-[#f45b5b]",
   redeem: "bg-[#176EFF]/15 text-[#7db4ff]",
   credit_expire: "bg-[#EF5459]/15 text-[#ff8f93]",
   adjust: "bg-white/10 text-muted-foreground",

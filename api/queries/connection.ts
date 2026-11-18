@@ -3,6 +3,8 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as schema from "@db/schema";
+import { creditDollarsToUnits, creditUnitsToDollars, reverseUserBalanceDebit } from "./credit-grants";
+import { recordTx } from "./ledger";
 import {
   DEFAULT_SLOT_RULES,
   LEGACY_SLOT_RULES,
@@ -35,6 +37,29 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS users_linuxdo_id_idx ON users (linuxdo_id);
 CREATE UNIQUE INDEX IF NOT EXISTS users_group_name_idx ON users (group_name);
+
+CREATE TABLE IF NOT EXISTS level_profiles (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id),
+  total_exp INTEGER NOT NULL DEFAULT 0,
+  equipped_level INTEGER
+);
+CREATE TABLE IF NOT EXISTS experience_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  event_key TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS experience_events_user_key ON experience_events(user_id, event_key);
+CREATE TABLE IF NOT EXISTS level_badges (
+  level INTEGER NOT NULL,
+  rank INTEGER NOT NULL CONSTRAINT level_badges_rank CHECK(rank BETWEEN 1 AND 3),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  event_id INTEGER NOT NULL REFERENCES experience_events(id),
+  awarded_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS level_badges_seat ON level_badges(level, rank);
+CREATE UNIQUE INDEX IF NOT EXISTS level_badges_owner ON level_badges(user_id, level);
 
 CREATE TABLE IF NOT EXISTS pending_users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -122,28 +147,6 @@ CREATE TABLE IF NOT EXISTS code_redemptions (
 CREATE UNIQUE INDEX IF NOT EXISTS code_redemptions_code_user_unique ON code_redemptions (code_id, user_id);
 CREATE INDEX IF NOT EXISTS code_redemptions_code_idx ON code_redemptions (code_id);
 CREATE INDEX IF NOT EXISTS code_redemptions_user_idx ON code_redemptions (user_id);
-
-CREATE TABLE IF NOT EXISTS report_card_balances (
-  user_id INTEGER PRIMARY KEY,
-  granted_count INTEGER NOT NULL DEFAULT 0,
-  consumed_count INTEGER NOT NULL DEFAULT 0,
-  remaining_count INTEGER NOT NULL DEFAULT 0,
-  updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
-);
-CREATE TABLE IF NOT EXISTS report_card_ledger (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  type TEXT NOT NULL,
-  amount INTEGER NOT NULL,
-  remaining_after INTEGER NOT NULL,
-  redemption_id INTEGER,
-  report_request_id TEXT,
-  note TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
-);
-CREATE INDEX IF NOT EXISTS report_card_ledger_user_idx ON report_card_ledger (user_id, id);
-CREATE UNIQUE INDEX IF NOT EXISTS report_card_ledger_redemption_unique ON report_card_ledger (redemption_id) WHERE redemption_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS report_card_ledger_request_unique ON report_card_ledger (report_request_id) WHERE report_request_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS credit_grants (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -397,29 +400,6 @@ CREATE TABLE IF NOT EXISTS usage_logs (
 );
 CREATE INDEX IF NOT EXISTS usage_user_idx ON usage_logs (user_id);
 
-CREATE TABLE IF NOT EXISTS reports (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  request_id TEXT,
-  reporter_id INTEGER NOT NULL,
-  target_id INTEGER NOT NULL,
-  kind TEXT NOT NULL DEFAULT 'targeted',
-  success INTEGER NOT NULL DEFAULT 0,
-  amount REAL NOT NULL DEFAULT 0,
-  reporter_balance_before REAL,
-  target_balance_before REAL,
-  lower_balance REAL,
-  gross_amount REAL NOT NULL DEFAULT 0,
-  tax_basis_points INTEGER NOT NULL DEFAULT 500,
-  tax REAL NOT NULL DEFAULT 0,
-  credited_amount REAL NOT NULL DEFAULT 0,
-  deducted_amount REAL NOT NULL DEFAULT 0,
-  quota_source TEXT NOT NULL DEFAULT 'daily',
-  success_basis_points INTEGER NOT NULL DEFAULT 4000,
-  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
-);
-CREATE INDEX IF NOT EXISTS reports_reporter_idx ON reports (reporter_id);
-CREATE INDEX IF NOT EXISTS reports_target_idx ON reports (target_id);
-
 CREATE TABLE IF NOT EXISTS slot_configs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   version TEXT NOT NULL,
@@ -657,78 +637,6 @@ CREATE TABLE IF NOT EXISTS duel_ledger (
 CREATE INDEX IF NOT EXISTS duel_ledger_room_idx ON duel_ledger (room_id, id);
 CREATE INDEX IF NOT EXISTS duel_ledger_user_idx ON duel_ledger (user_id, id);
 
-CREATE TABLE IF NOT EXISTS team_battle_configs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, version INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1,
-  enabled INTEGER NOT NULL DEFAULT 1, single_bet_limit_units INTEGER NOT NULL DEFAULT 10000000,
-  user_bet_limit_units INTEGER NOT NULL DEFAULT 50000000, room_bet_limit_units INTEGER NOT NULL DEFAULT 500000000,
-  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS team_battle_configs_version_unique ON team_battle_configs (version);
-CREATE INDEX IF NOT EXISTS team_battle_configs_active_idx ON team_battle_configs (active);
-
-CREATE TABLE IF NOT EXISTS team_battle_rooms (
-  id TEXT PRIMARY KEY, code TEXT NOT NULL, mode TEXT NOT NULL, visibility TEXT NOT NULL DEFAULT 'public',
-  owner_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'lobby', seats_per_team INTEGER NOT NULL,
-  roster_locked INTEGER NOT NULL DEFAULT 0, config_version INTEGER NOT NULL, config_snapshot_json TEXT NOT NULL,
-  vote_round INTEGER NOT NULL DEFAULT 1, winner_team TEXT, pool_a_units INTEGER NOT NULL DEFAULT 0,
-  pool_b_units INTEGER NOT NULL DEFAULT 0, losing_pool_tax_units INTEGER NOT NULL DEFAULT 0,
-  player_tax_units INTEGER NOT NULL DEFAULT 0, platform_tax_units INTEGER NOT NULL DEFAULT 0,
-  payout_units INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
-  locked_at INTEGER, betting_closed_at INTEGER, finished_at INTEGER, dispute_reason TEXT
-);
-CREATE UNIQUE INDEX IF NOT EXISTS team_battle_rooms_code_unique ON team_battle_rooms (code);
-CREATE INDEX IF NOT EXISTS team_battle_rooms_status_idx ON team_battle_rooms (status, created_at);
-
-CREATE TABLE IF NOT EXISTS team_battle_players (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL, user_id INTEGER NOT NULL, team TEXT NOT NULL,
-  seat INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'joined', tax_share_units INTEGER NOT NULL DEFAULT 0,
-  joined_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000), exited_at INTEGER
-);
-CREATE UNIQUE INDEX IF NOT EXISTS team_battle_players_room_user_unique ON team_battle_players (room_id, user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS team_battle_players_room_team_seat_unique ON team_battle_players (room_id, team, seat);
-CREATE INDEX IF NOT EXISTS team_battle_players_user_idx ON team_battle_players (user_id, joined_at);
-
-CREATE TABLE IF NOT EXISTS team_battle_bets (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL, room_id TEXT NOT NULL, user_id INTEGER NOT NULL,
-  team TEXT NOT NULL, amount_units INTEGER NOT NULL, pool_a_before_units INTEGER NOT NULL,
-  pool_b_before_units INTEGER NOT NULL, projected_return_ppm INTEGER, status TEXT NOT NULL DEFAULT 'escrowed',
-  payout_units INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000), settled_at INTEGER
-);
-CREATE UNIQUE INDEX IF NOT EXISTS team_battle_bets_request_unique ON team_battle_bets (request_id);
-CREATE INDEX IF NOT EXISTS team_battle_bets_room_idx ON team_battle_bets (room_id, id);
-CREATE INDEX IF NOT EXISTS team_battle_bets_user_idx ON team_battle_bets (user_id, id);
-
-CREATE TABLE IF NOT EXISTS team_battle_votes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL, room_id TEXT NOT NULL,
-  vote_round INTEGER NOT NULL, user_id INTEGER NOT NULL, winner_team TEXT NOT NULL,
-  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS team_battle_votes_request_unique ON team_battle_votes (request_id);
-CREATE UNIQUE INDEX IF NOT EXISTS team_battle_votes_room_round_user_unique ON team_battle_votes (room_id, vote_round, user_id);
-CREATE INDEX IF NOT EXISTS team_battle_votes_room_idx ON team_battle_votes (room_id, vote_round);
-
-CREATE TABLE IF NOT EXISTS team_battle_events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL, seq INTEGER NOT NULL, request_id TEXT,
-  user_id INTEGER, type TEXT NOT NULL, payload_json TEXT NOT NULL DEFAULT '{}',
-  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS team_battle_events_room_seq_unique ON team_battle_events (room_id, seq);
-CREATE UNIQUE INDEX IF NOT EXISTS team_battle_events_request_unique ON team_battle_events (request_id) WHERE request_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS team_battle_events_room_idx ON team_battle_events (room_id, id);
-
-CREATE TABLE IF NOT EXISTS team_battle_fund (
-  id INTEGER PRIMARY KEY, balance_units INTEGER NOT NULL DEFAULT 0,
-  updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
-);
-CREATE TABLE IF NOT EXISTS team_battle_ledger (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL, user_id INTEGER, request_id TEXT,
-  type TEXT NOT NULL, amount_units INTEGER NOT NULL, user_balance_after_units INTEGER,
-  fund_balance_after_units INTEGER, note TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
-);
-CREATE INDEX IF NOT EXISTS team_battle_ledger_room_idx ON team_battle_ledger (room_id, id);
-CREATE INDEX IF NOT EXISTS team_battle_ledger_user_idx ON team_battle_ledger (user_id, id);
-
 CREATE TABLE IF NOT EXISTS money_transfers (
   id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL, sender_id INTEGER NOT NULL,
   recipient_id INTEGER NOT NULL, amount_units INTEGER NOT NULL, fee_units INTEGER NOT NULL,
@@ -858,33 +766,6 @@ function migrate(sqlite: InstanceType<typeof Database>) {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS draws_user_unique ON draws (user_id) WHERE user_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS draws_request_unique ON draws (request_id) WHERE request_id IS NOT NULL;
-  `);
-
-  const cols = (sqlite.prepare("PRAGMA table_info(reports)").all() as { name: string }[]).map((c) => c.name);
-  if (!cols.includes("kind")) sqlite.exec("ALTER TABLE reports ADD COLUMN kind TEXT NOT NULL DEFAULT 'targeted'");
-  if (!cols.includes("tax")) sqlite.exec("ALTER TABLE reports ADD COLUMN tax REAL NOT NULL DEFAULT 0");
-  if (!cols.includes("request_id")) sqlite.exec("ALTER TABLE reports ADD COLUMN request_id TEXT");
-  if (!cols.includes("reporter_balance_before")) sqlite.exec("ALTER TABLE reports ADD COLUMN reporter_balance_before REAL");
-  if (!cols.includes("target_balance_before")) sqlite.exec("ALTER TABLE reports ADD COLUMN target_balance_before REAL");
-  if (!cols.includes("lower_balance")) sqlite.exec("ALTER TABLE reports ADD COLUMN lower_balance REAL");
-  if (!cols.includes("gross_amount")) sqlite.exec("ALTER TABLE reports ADD COLUMN gross_amount REAL NOT NULL DEFAULT 0");
-  if (!cols.includes("tax_basis_points")) sqlite.exec("ALTER TABLE reports ADD COLUMN tax_basis_points INTEGER NOT NULL DEFAULT 500");
-  if (!cols.includes("credited_amount")) sqlite.exec("ALTER TABLE reports ADD COLUMN credited_amount REAL NOT NULL DEFAULT 0");
-  if (!cols.includes("deducted_amount")) sqlite.exec("ALTER TABLE reports ADD COLUMN deducted_amount REAL NOT NULL DEFAULT 0");
-  if (!cols.includes("quota_source")) sqlite.exec("ALTER TABLE reports ADD COLUMN quota_source TEXT NOT NULL DEFAULT 'daily'");
-  if (!cols.includes("success_basis_points")) sqlite.exec("ALTER TABLE reports ADD COLUMN success_basis_points INTEGER NOT NULL DEFAULT 4000");
-  sqlite.exec(`
-    UPDATE reports SET
-      gross_amount = amount + tax,
-      credited_amount = amount,
-      deducted_amount = amount + tax,
-      tax_basis_points = CASE
-        WHEN amount + tax > 0 THEN ROUND(tax * 10000.0 / (amount + tax))
-        ELSE 0
-      END
-    WHERE gross_amount = 0 AND credited_amount = 0 AND deducted_amount = 0;
-    CREATE UNIQUE INDEX IF NOT EXISTS reports_request_id_unique
-      ON reports (request_id) WHERE request_id IS NOT NULL;
   `);
 
   // models 增加 upstream_id（上游渠道外键）
@@ -1046,12 +927,10 @@ function migrate(sqlite: InstanceType<typeof Database>) {
   sqlite.exec(`
     CREATE INDEX IF NOT EXISTS usage_status_created_idx ON usage_logs (status, created_at, user_id);
     CREATE INDEX IF NOT EXISTS usage_model_created_idx ON usage_logs (model, created_at);
-    CREATE INDEX IF NOT EXISTS reports_created_user_idx ON reports (created_at, reporter_id);
     CREATE INDEX IF NOT EXISTS checkins_created_user_idx ON checkins (created_at, user_id);
     CREATE INDEX IF NOT EXISTS daily_signins_created_user_idx ON daily_signins (created_at, user_id);
     CREATE INDEX IF NOT EXISTS money_transfers_status_created_idx ON money_transfers (status, created_at);
     CREATE INDEX IF NOT EXISTS peer_loans_status_accepted_idx ON peer_loans (status, accepted_at);
-    CREATE INDEX IF NOT EXISTS team_battle_bets_status_settled_idx ON team_battle_bets (status, settled_at, user_id);
   `);
 
   // 模型名唯一（老库若有重名则跳过，不影响运行）
@@ -1147,20 +1026,9 @@ function seedEntertainmentControl(sqlite: InstanceType<typeof Database>) {
     ["video_reward_daily_limit", "1"],
     ["video_reward_use_fund", "1"],
     ["video_reward_video_resource", "/media/lucky-video-red-envelope-15s.mp4"],
-    ["report_daily_limit", "3"],
-    ["report_success_basis_points", "4000"],
   ];
   const insert = sqlite.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
   for (const [key, value] of defaults) insert.run(key, value);
-  // 旧部署只有 report_daily_limit：第一次升级时按“指定最多 1 次，其余随机”拆分，
-  // 不能直接写死 1/2，否则会覆盖管理员此前设置的旧总次数语义。
-  const legacyReportLimitRaw = Number((sqlite.prepare("SELECT value FROM settings WHERE key = 'report_daily_limit'").get() as { value?: string } | undefined)?.value ?? 3);
-  const legacyReportLimit = Number.isInteger(legacyReportLimitRaw) && legacyReportLimitRaw >= 0 && legacyReportLimitRaw <= 100
-    ? legacyReportLimitRaw
-    : 3;
-  insert.run("report_targeted_daily_limit", String(Math.min(1, legacyReportLimit)));
-  insert.run("report_random_daily_limit", String(Math.max(0, legacyReportLimit - Math.min(1, legacyReportLimit))));
-
   // 旧版默认指向内部生成的 WebM 占位视频；升级时仅迁移该旧默认值，
   // 不覆盖管理员已经配置的其他本地视频资源。
   sqlite.prepare(`
@@ -1186,12 +1054,49 @@ function seedDuelControl(sqlite: InstanceType<typeof Database>) {
     `).run();
   }
   sqlite.prepare("INSERT OR IGNORE INTO duel_fund (id, balance_units) VALUES (1, 0)").run();
-  const teamBattleActive = sqlite.prepare("SELECT id FROM team_battle_configs WHERE active = 1 ORDER BY version DESC LIMIT 1").get();
-  if (!teamBattleActive) sqlite.prepare(`
-    INSERT INTO team_battle_configs (version, active, enabled, single_bet_limit_units, user_bet_limit_units, room_bet_limit_units)
-    VALUES (1, 1, 1, 10000000, 50000000, 500000000)
-  `).run();
-  sqlite.prepare("INSERT OR IGNORE INTO team_battle_fund (id, balance_units) VALUES (1, 0)").run();
+}
+
+// The legacy writer debited funds and inserted its escrow row in the same transaction.
+// Its terminal statuses already include any payout/refund. Keep those rows as history.
+function refundLegacyEscrows(sqlite: InstanceType<typeof Database>) {
+  if (!sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'team_battle_bets'").get()) return;
+  const db = drizzle(sqlite, { schema });
+  sqlite.transaction(() => {
+    const bets = sqlite.prepare(
+      "SELECT id, room_id, user_id, request_id, amount_units FROM team_battle_bets WHERE status = 'escrowed' ORDER BY id",
+    ).all() as { id: number; room_id: string; user_id: number; request_id: string; amount_units: number }[];
+    if (!bets.length) return;
+    const now = new Date();
+    const markRefunded = sqlite.prepare("UPDATE team_battle_bets SET status = 'refunded', payout_units = ?, settled_at = ? WHERE id = ?");
+    const recordRefund = sqlite.prepare(
+      `INSERT INTO team_battle_ledger (room_id, user_id, request_id, type, amount_units, user_balance_after_units, note)
+       SELECT ?, id, ?, 'refund', ?, ROUND(balance * 1000000), ? FROM users WHERE id = ?`,
+    );
+    const rooms = new Set<string>();
+    for (const bet of bets) {
+      const note = `玩法下线退还未结投注（${bet.request_id}）`;
+      const refund = reverseUserBalanceDebit(db, {
+        userId: bet.user_id, amount: creditUnitsToDollars(bet.amount_units), sourceKind: "team_battle",
+        requestId: bet.request_id, note, now,
+      });
+      const credited = creditDollarsToUnits(refund.credited);
+      if (credited > 0) recordTx(db, bet.user_id, "adjust", refund.credited, note);
+      recordRefund.run(bet.room_id, bet.request_id, credited, note, bet.user_id);
+      const expired = creditDollarsToUnits(refund.expiredTemporary);
+      if (expired > 0) {
+        sqlite.prepare("UPDATE team_battle_fund SET balance_units = balance_units + ?, updated_at = ? WHERE id = 1").run(expired, now.getTime());
+        sqlite.prepare(`INSERT INTO team_battle_ledger (room_id, request_id, type, amount_units, fund_balance_after_units, note)
+          SELECT ?, ?, 'expired_credit_forfeit', ?, balance_units, '临时额度已到期' FROM team_battle_fund WHERE id = 1`)
+          .run(bet.room_id, bet.request_id, expired);
+      }
+      markRefunded.run(credited, now.getTime(), bet.id);
+      rooms.add(bet.room_id);
+    }
+    const closeRoom = sqlite.prepare(`UPDATE team_battle_rooms SET status = 'refunded', finished_at = ?,
+      payout_units = (SELECT SUM(payout_units) FROM team_battle_bets WHERE room_id = ?), dispute_reason = '玩法下线'
+      WHERE id = ?`);
+    for (const roomId of rooms) closeRoom.run(now.getTime(), roomId, roomId);
+  }).immediate();
 }
 
 let instance: ReturnType<typeof drizzle<typeof schema>> | undefined;
@@ -1200,18 +1105,24 @@ export function getDb() {
   if (!instance) {
     mkdirSync(dirname(DB_PATH), { recursive: true });
     const sqlite = new Database(DB_PATH);
-    sqlite.pragma("journal_mode = WAL");
-    sqlite.pragma("busy_timeout = 5000");
-    sqlite.exec(DDL);
-    migrate(sqlite);
-    seedSlotControl(sqlite);
-    seedEntertainmentControl(sqlite);
-    seedDuelControl(sqlite);
-    // 预置默认分组
-    sqlite
-      .prepare("INSERT OR IGNORE INTO \"groups\" (name, multiplier, description) VALUES ('default', 1, '默认分组')")
-      .run();
-    instance = drizzle(sqlite, { schema });
+    try {
+      sqlite.pragma("journal_mode = WAL");
+      sqlite.pragma("busy_timeout = 5000");
+      sqlite.exec(DDL);
+      migrate(sqlite);
+      refundLegacyEscrows(sqlite);
+      seedSlotControl(sqlite);
+      seedEntertainmentControl(sqlite);
+      seedDuelControl(sqlite);
+      // 预置默认分组
+      sqlite
+        .prepare("INSERT OR IGNORE INTO \"groups\" (name, multiplier, description) VALUES ('default', 1, '默认分组')")
+        .run();
+      instance = drizzle(sqlite, { schema });
+    } catch (error) {
+      sqlite.close();
+      throw error;
+    }
   }
   return instance;
 }

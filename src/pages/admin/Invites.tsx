@@ -16,13 +16,13 @@ export default function Invites() {
   const invites = trpc.admin.listInvitesPage.useQuery({ page, pageSize, status: codeStatus });
 
   const [inviteCount, setInviteCount] = useState(10);
-  const [codeType, setCodeType] = useState<"invite" | "redeem" | "report">("invite");
+  const [codeType, setCodeType] = useState<"invite" | "redeem">("invite");
   const [codeAmount, setCodeAmount] = useState("5");
   const [codeMode, setCodeMode] = useState<"single" | "reusable">("single");
   const [maxUses, setMaxUses] = useState("");
   const [balanceBelow, setBalanceBelow] = useState("");
   const [creditExpiresAt, setCreditExpiresAt] = useState("");
-  const [historyCode, setHistoryCode] = useState<{ id: number; code: string; type: "invite" | "redeem" | "report" } | null>(null);
+  const [historyCode, setHistoryCode] = useState<{ id: number; code: string } | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState(20);
   const cleanup = trpc.admin.previewUsedCodeCleanup.useQuery(undefined);
@@ -68,18 +68,17 @@ export default function Invites() {
     <div className="rounded-xl border border-border bg-card p-6">
       <div className="flex flex-wrap items-center gap-3">
         <Label className="text-primary">批量生成</Label>
-        <Select value={codeType} onValueChange={(v) => setCodeType(v as "invite" | "redeem" | "report")}>
+        <Select value={codeType} onValueChange={(v) => setCodeType(v as "invite" | "redeem")}>
           <SelectTrigger className="w-36 border-border bg-[hsl(var(--admin-control))]"><SelectValue /></SelectTrigger>
           <SelectContent className="border-border bg-card text-foreground">
             <SelectItem value="invite">邀请码</SelectItem>
             <SelectItem value="redeem">兑换码（充值）</SelectItem>
-            <SelectItem value="report">举报卡（永久次数）</SelectItem>
           </SelectContent>
         </Select>
         {codeType !== "invite" && (
           <>
-            <Label className="text-muted-foreground">{codeType === "report" ? "举报次数" : "面额 $"}</Label>
-            <Input type="number" min={codeType === "report" ? 1 : 0.01} max={codeType === "report" ? 10000 : undefined} step={codeType === "report" ? 1 : 0.01} value={codeAmount}
+            <Label className="text-muted-foreground">面额 $</Label>
+            <Input type="number" min={0.01} step={0.01} value={codeAmount}
               onChange={(e) => setCodeAmount(e.target.value)}
               className="w-24 border-border bg-[hsl(var(--admin-control))]" />
             <Select value={codeMode} onValueChange={(v) => setCodeMode(v as "single" | "reusable") }>
@@ -92,12 +91,12 @@ export default function Invites() {
             {codeMode === "reusable" && <Input type="number" min={2} step={1} value={maxUses}
               onChange={(e) => setMaxUses(e.target.value)} placeholder="总次数（留空不限）"
               className="w-40 border-border bg-[hsl(var(--admin-control))]" />}
-            {codeType === "redeem" && <Input type="number" min={0} step={0.01} value={balanceBelow}
+            <Input type="number" min={0} step={0.01} value={balanceBelow}
               onChange={(e) => setBalanceBelow(e.target.value)} placeholder="余额低于（留空不限制）"
-              className="w-48 border-border bg-[hsl(var(--admin-control))]" />}
-            {codeType === "redeem" && <div className="space-y-1"><Label className="text-[10px] text-muted-foreground">额度失效时间（北京时间，留空永久）</Label><Input type="datetime-local" value={creditExpiresAt}
+              className="w-48 border-border bg-[hsl(var(--admin-control))]" />
+            <div className="space-y-1"><Label className="text-[10px] text-muted-foreground">额度失效时间（北京时间，留空永久）</Label><Input type="datetime-local" value={creditExpiresAt}
               onChange={(e) => setCreditExpiresAt(e.target.value)}
-              className="w-56 border-border bg-[hsl(var(--admin-control))]" /></div>}
+              className="w-56 border-border bg-[hsl(var(--admin-control))]" /></div>
           </>
         )}
         <Label className="text-muted-foreground">数量</Label>
@@ -140,7 +139,7 @@ export default function Invites() {
         </Select>
       </div>
       <p className="mt-3 text-xs text-muted-foreground">
-        多账号可重复模式下，同一账号对同一码只能兑换一次；总次数可限制或留空表示不限。举报卡按整数次数发放、永久有效、没有余额门槛；用户每日免费次数用完后才会消耗。
+        多账号可重复模式下，同一账号对同一码只能兑换一次；总次数可限制或留空表示不限。
       </p>
       <Table className="mt-6">
         <TableHeader><TableRow className="border-border hover:bg-transparent">
@@ -163,12 +162,10 @@ export default function Invites() {
               <TableCell>
                 {c.type === "redeem"
                   ? <span className="rounded bg-[#00B77D]/20 px-1.5 py-0.5 text-xs text-[#00B77D]">兑换码</span>
-                  : c.type === "report"
-                    ? <span className="rounded bg-[#FFB700]/20 px-1.5 py-0.5 text-xs text-[#FFB700]">举报卡</span>
-                    : <span className="rounded bg-[#176EFF]/20 px-1.5 py-0.5 text-xs text-[#7db4ff]">邀请码</span>}
+                  : <span className="rounded bg-[#176EFF]/20 px-1.5 py-0.5 text-xs text-[#7db4ff]">邀请码</span>}
               </TableCell>
               <TableCell className="text-xs text-muted-foreground">{c.mode === "reusable" ? "多账号可重复" : "全局单次"}</TableCell>
-              <TableCell className="font-num text-right text-foreground">{c.amount ? (c.type === "report" ? `${c.amount} 次` : `$${c.amount}`) : "—"}</TableCell>
+              <TableCell className="font-num text-right text-foreground">{c.amount ? `$${c.amount}` : "—"}</TableCell>
               <TableCell className="text-xs text-muted-foreground">{c.type === "redeem" ? (c.balanceBelow === null ? "无" : `< $${Number(c.balanceBelow).toFixed(2)}`) : "—"}</TableCell>
               <TableCell className="text-xs text-muted-foreground">{c.type !== "redeem" ? "—" : c.creditExpiresAt ? <><span className="block text-accent">{new Date(c.creditExpiresAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}</span><span className="text-[10px]">北京时间</span></> : "永久"}</TableCell>
               <TableCell className="font-num text-xs text-muted-foreground">
@@ -183,7 +180,7 @@ export default function Invites() {
                 {!exhausted && !creditDeadlinePassed && !c.archivedAt && <button className="mr-3 text-xs text-primary hover:underline"
                   onClick={() => { navigator.clipboard.writeText(c.code); toast.success("已复制"); }}>复制</button>}
                 {c.auditCount > 0 && <button className="mr-3 text-xs text-primary hover:underline"
-                  onClick={() => { setHistoryPage(1); setHistoryCode({ id: c.id, code: c.code, type: c.type }); }}>记录</button>}
+                  onClick={() => { setHistoryPage(1); setHistoryCode({ id: c.id, code: c.code }); }}>记录</button>}
                 {c.type === "redeem" && !c.archivedAt && <button className="mr-3 text-xs text-[#7db4ff] hover:underline"
                   onClick={() => {
                     const value = window.prompt("仅当当前余额严格低于多少美元时可兑换？留空表示取消门槛。", c.balanceBelow === null ? "" : String(c.balanceBelow));
@@ -221,10 +218,10 @@ export default function Invites() {
             </TableRow></TableHeader><TableBody>
               {history.data?.items.map((row) => <TableRow key={row.id} className="border-border">
                 <TableCell>{row.groupName ?? row.username ?? `用户 #${row.userId}`}</TableCell>
-                <TableCell className="font-num text-right">{row.codeType === "report" ? `${Number(row.amount)} 次` : `$${Number(row.amount).toFixed(2)}`}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{row.codeType === "report" ? "不适用" : <>{row.balanceBefore === null ? "旧记录" : `$${Number(row.balanceBefore).toFixed(2)}`} / {row.balanceBelow === null ? "无" : `< $${Number(row.balanceBelow).toFixed(2)}`}</>}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{row.codeType === "report" ? "举报次数永久有效" : row.creditExpiresAt ? new Date(row.creditExpiresAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) : "永久"}</TableCell>
-                <TableCell className="font-num text-[10px] text-muted-foreground">{row.codeType === "report" ? "不适用" : row.grantStatus ? `原 $${((row.grantOriginalUnits ?? 0) / 1_000_000).toFixed(6)} / 已用 $${((row.grantConsumedUnits ?? 0) / 1_000_000).toFixed(6)} / 剩余 $${((row.grantRemainingUnits ?? 0) / 1_000_000).toFixed(6)} / 清退 $${((row.grantExpiredUnits ?? 0) / 1_000_000).toFixed(6)} · ${row.grantStatus}` : "永久额度"}</TableCell>
+                <TableCell className="font-num text-right">${Number(row.amount).toFixed(2)}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{row.balanceBefore === null ? "旧记录" : `$${Number(row.balanceBefore).toFixed(2)}`} / {row.balanceBelow === null ? "无" : `< $${Number(row.balanceBelow).toFixed(2)}`}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{row.creditExpiresAt ? new Date(row.creditExpiresAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) : "永久"}</TableCell>
+                <TableCell className="font-num text-[10px] text-muted-foreground">{row.grantStatus ? `原 $${((row.grantOriginalUnits ?? 0) / 1_000_000).toFixed(6)} / 已用 $${((row.grantConsumedUnits ?? 0) / 1_000_000).toFixed(6)} / 剩余 $${((row.grantRemainingUnits ?? 0) / 1_000_000).toFixed(6)} / 清退 $${((row.grantExpiredUnits ?? 0) / 1_000_000).toFixed(6)} · ${row.grantStatus}` : "永久额度"}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{new Date(row.redeemedAt).toLocaleString("zh-CN")}</TableCell>
               </TableRow>)}
               {history.data?.items.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground">暂无记录</TableCell></TableRow>}

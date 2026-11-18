@@ -14,7 +14,6 @@ const LINKS = [
   { to: "/entertainment", label: "娱乐" },
   { to: "/arena", label: "决斗场" },
   { to: "/leaderboard", label: "榜单" },
-  { to: "/report", label: "举报" },
   { to: "/models", label: "模型广场" },
   { to: "/console", label: "控制台" },
 ];
@@ -71,7 +70,6 @@ export function SiteNav({ user }: { user?: { groupName: string | null; balance: 
                     <DropdownMenuItem asChild><Link to="/console" className="cursor-pointer">进入控制台</Link></DropdownMenuItem>
                     <DropdownMenuItem asChild><Link to="/console/finance" className="cursor-pointer">资金与借贷</Link></DropdownMenuItem>
                     <DropdownMenuItem asChild><Link to="/leaderboard" className="cursor-pointer">榜单中心</Link></DropdownMenuItem>
-                    <DropdownMenuItem asChild><Link to="/report" className="cursor-pointer">举报中心</Link></DropdownMenuItem>
                     <DropdownMenuSeparator className="bg-border" />
                     <DropdownMenuItem onClick={() => logout.mutate()} className="cursor-pointer text-[#EF5459] focus:text-[#EF5459]">退出登录</DropdownMenuItem>
                   </DropdownMenuContent>

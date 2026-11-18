@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { Gift, Cherry, CalendarCheck, Swords, Shield, ArrowRight, Loader2 } from "lucide-react";
+import { Gift, Cherry, CalendarCheck, Swords, ArrowRight, Loader2 } from "lucide-react";
 import { useMe } from "@/hooks/useMe";
 import { SiteNav } from "@/components/SiteNav";
 import { trpc } from "@/providers/trpc";
@@ -53,13 +53,6 @@ export default function Entertainment() {
       icon: Swords,
       title: "幸运决斗场",
       desc: "幸运骰子 / 二十一点 · 2–6 人 PVP 奖池 · 赢家税率全场公示",
-      status: null,
-    },
-    {
-      to: "/arena/team",
-      icon: Shield,
-      title: "战队对抗",
-      desc: "1v1 / 3v3 / 5v5 固定队席 · 实时奖池赔率 · 多数投票结算",
       status: null,
     },
   ] as const;

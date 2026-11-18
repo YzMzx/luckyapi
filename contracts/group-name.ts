@@ -11,7 +11,7 @@ export function normalizeGroupName(value: string): string {
 }
 
 /**
- * 群内名称是榜单和举报记录里的公开身份：必填、唯一，允许中英文/数字/常见标点，
+ * 群内名称是榜单里的公开身份：必填、唯一，允许中英文/数字/常见标点，
  * 但拒绝控制字符、双向文本控制、HTML 尖括号和系统身份冒充。
  */
 export const groupNameSchema = z.string()

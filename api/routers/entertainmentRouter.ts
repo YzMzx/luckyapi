@@ -259,10 +259,6 @@ export const entertainmentRouter = createRouter({
         mode: signinConfig.mode,
         budgetRemaining: centsToDollars(Number(signinPool?.balanceUnits ?? 0)),
       },
-      report: {
-        enabled: limits.report > 0,
-        dailyLimit: limits.report,
-      },
       videoReward: readMemberVideoRewardState(tx, ctx.user.id),
       announcements: publicAnnouncements(tx, now, 10),
     };

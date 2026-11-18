@@ -9,7 +9,6 @@ import {
   validateWeightedRewards,
   type WeightedReward,
 } from "@contracts/entertainment";
-import { DEFAULT_REPORT_SUCCESS_BASIS_POINTS, MAX_REPORT_SUCCESS_BASIS_POINTS } from "@contracts/report-tax";
 
 type ReadDb = Pick<BetterSQLite3Database<typeof schema>, "select">;
 
@@ -34,31 +33,8 @@ export function currentBusinessDay(db: ReadDb, now = new Date()) {
 }
 
 export function readDailyLimits(db: ReadDb) {
-  const report = readReportRules(db);
   return {
     slot: integerSetting(db, SETTING_KEYS.slotDailyLimit, 1, 0, 100),
-    report: report.targetedDailyLimit + report.randomDailyLimit,
-    reportTargeted: report.targetedDailyLimit,
-    reportRandom: report.randomDailyLimit,
-  };
-}
-
-/**
- * 旧版只有一个共用次数。新配置缺失时保留旧总量，并按历史默认分成指定 1 次、
- * 其余随机；一旦后台保存新规则，就完全使用两个独立值。
- */
-export function readReportRules(db: ReadDb) {
-  const legacyTotal = integerSetting(db, SETTING_KEYS.reportDailyLimit, 3, 0, 100);
-  const legacyTargeted = Math.min(1, legacyTotal);
-  const legacyRandom = Math.max(0, legacyTotal - legacyTargeted);
-  return {
-    targetedDailyLimit: integerSetting(db, SETTING_KEYS.reportTargetedDailyLimit, legacyTargeted, 0, 100),
-    randomDailyLimit: integerSetting(db, SETTING_KEYS.reportRandomDailyLimit, legacyRandom, 0, 100),
-    successBasisPoints: integerSetting(db, SETTING_KEYS.reportSuccessBasisPoints, DEFAULT_REPORT_SUCCESS_BASIS_POINTS, 0, MAX_REPORT_SUCCESS_BASIS_POINTS),
-    quotaResetAt: (() => {
-      const value = Number(readSetting(db, SETTING_KEYS.reportQuotaResetAt, "0"));
-      return Number.isSafeInteger(value) && value >= 0 ? new Date(value) : new Date(0);
-    })(),
   };
 }
 

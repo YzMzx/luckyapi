@@ -8,7 +8,7 @@ import { recordTx } from "../queries/ledger";
 import { creditDollarsToUnits, debitUserBalance, expireUserCreditGrants } from "../queries/credit-grants";
 import {
   users, inviteCodes, codeRedemptions, creditGrants, draws, checkins, models, usageLogs, groups,
-  apiKeys, reports, upstreams, adminLogs, slotConfigs, slotFund, slotFundLedger, slotPromotions,
+  apiKeys, upstreams, adminLogs, slotConfigs, slotFund, slotFundLedger, slotPromotions,
   duelConfigs, duelRooms, duelPlayers, duelEvents, duelLedger, duelFund,
   announcements, dailySignins, signinFund, drawFund, settings,
   videoRewardFund, videoRewardLedger, videoRewardSessions,
@@ -17,7 +17,7 @@ import {
 import { createRouter, publicQuery } from "../middleware";
 import {
   authSettingsAdminRouter, controlAdminRouter, disableUserApiKeysProcedure, financeSettingsAdminRouter,
-  monitoringAdminRouter, reportSettingsAdminRouter, revokeUserSessionsProcedure, updateUserPolicyProcedure, userDetailProcedure,
+  monitoringAdminRouter, revokeUserSessionsProcedure, updateUserPolicyProcedure, userDetailProcedure,
 } from "./adminOperations";
 import { adminQuery, createAdminSession, cookieHeader, ADMIN_COOKIE, clearCookieHeader, hashAdminPassword, randomToken, requestUsesHttps, verifyAdminPassword } from "../auth";
 import { getSetting, setSetting, SETTING_KEYS } from "../settings";
@@ -193,11 +193,12 @@ const signedMoneyUnits = (value: string) => {
   return Number.isSafeInteger(units) ? (match[1] ? -units : units) : null;
 };
 
+const supportedInviteTypes = inArray(inviteCodes.type, ["invite", "redeem"]);
+
 export const adminRouter = createRouter({
   control: controlAdminRouter,
   authSettings: authSettingsAdminRouter,
   financeSettings: financeSettingsAdminRouter,
-  reportSettings: reportSettingsAdminRouter,
   monitoring: monitoringAdminRouter,
   userDetail: userDetailProcedure,
   userPolicy: createRouter({ update: updateUserPolicyProcedure }),
@@ -216,85 +217,6 @@ export const adminRouter = createRouter({
       ctx.resHeaders.append("set-cookie", cookieHeader(ADMIN_COOKIE, token, 12 * 3600, requestUsesHttps(ctx.req)));
       return { ok: true };
     }),
-
-  // ---- 举报记录（全站） ----
-  listReports: adminQuery.query(async () => {
-    const reporter = alias(users, "reporter");
-    const target = alias(users, "target");
-    return getDb()
-      .select({
-        id: reports.id,
-        requestId: reports.requestId,
-        kind: reports.kind,
-        success: reports.success,
-        amount: reports.amount,
-        reporterBalanceBefore: reports.reporterBalanceBefore,
-        targetBalanceBefore: reports.targetBalanceBefore,
-        lowerBalance: reports.lowerBalance,
-        grossAmount: reports.grossAmount,
-        taxBasisPoints: reports.taxBasisPoints,
-        tax: reports.tax,
-        creditedAmount: reports.creditedAmount,
-        deductedAmount: reports.deductedAmount,
-        quotaSource: reports.quotaSource,
-        successBasisPoints: reports.successBasisPoints,
-        createdAt: reports.createdAt,
-        reporterName: reporter.groupName,
-        reporterUsername: reporter.username,
-        targetName: target.groupName,
-        targetUsername: target.username,
-      })
-      .from(reports)
-      .leftJoin(reporter, eq(reports.reporterId, reporter.id))
-      .leftJoin(target, eq(reports.targetId, target.id))
-      .orderBy(desc(reports.createdAt))
-      .limit(200);
-  }),
-
-  listReportsPage: adminQuery.input(paginationInput.extend({
-    kind: z.enum(["targeted", "random"]).optional(),
-    success: z.boolean().optional(),
-    from: z.date().optional(),
-    to: z.date().optional(),
-  })).query(({ input }) => getDb().transaction((tx) => {
-    const reporter = alias(users, "reporter_page");
-    const target = alias(users, "target_page");
-    const conditions = [];
-    if (input.kind) conditions.push(eq(reports.kind, input.kind));
-    if (input.success !== undefined) conditions.push(eq(reports.success, input.success));
-    if (input.from) conditions.push(gte(reports.createdAt, input.from));
-    if (input.to) conditions.push(lt(reports.createdAt, input.to));
-    const where = conditions.length ? and(...conditions) : undefined;
-    const total = Number(tx.select({ n: sql<number>`COUNT(*)` }).from(reports).where(where).get()?.n ?? 0);
-    const { page, pageSize, offset } = resolvePagination(total, input.page, input.pageSize);
-    const items = tx.select({
-      id: reports.id,
-      requestId: reports.requestId,
-      kind: reports.kind,
-      success: reports.success,
-      amount: reports.amount,
-      reporterBalanceBefore: reports.reporterBalanceBefore,
-      targetBalanceBefore: reports.targetBalanceBefore,
-      lowerBalance: reports.lowerBalance,
-      grossAmount: reports.grossAmount,
-      taxBasisPoints: reports.taxBasisPoints,
-      tax: reports.tax,
-      creditedAmount: reports.creditedAmount,
-      deductedAmount: reports.deductedAmount,
-      quotaSource: reports.quotaSource,
-      successBasisPoints: reports.successBasisPoints,
-      createdAt: reports.createdAt,
-      reporterName: reporter.groupName,
-      reporterUsername: reporter.username,
-      targetName: target.groupName,
-      targetUsername: target.username,
-    }).from(reports)
-      .leftJoin(reporter, eq(reports.reporterId, reporter.id))
-      .leftJoin(target, eq(reports.targetId, target.id))
-      .where(where).orderBy(desc(reports.createdAt), desc(reports.id))
-      .limit(pageSize).offset(offset).all();
-    return paginatedResult(items, total, page, pageSize);
-  })),
 
   // ---- 民间贷只读审计 ----
   listPeerLoansPage: adminQuery.input(paginationInput.extend({
@@ -373,12 +295,10 @@ export const adminRouter = createRouter({
     const signinConfig = readSigninConfig(tx);
     const drawPool = tx.select().from(drawFund).where(eq(drawFund.id, 1)).limit(1).get();
     const signinPool = tx.select().from(signinFund).where(eq(signinFund.id, 1)).limit(1).get();
-    const [drawCount, signinToday, slotToday, reportToday] = [
+    const [drawCount, signinToday, slotToday] = [
       Number(tx.select({ n: sql<number>`COUNT(*)` }).from(draws).where(sql`${draws.userId} IS NOT NULL`).get()?.n ?? 0),
       Number(tx.select({ n: sql<number>`COUNT(*)` }).from(dailySignins).where(eq(dailySignins.day, day.key)).get()?.n ?? 0),
       Number(tx.select({ n: sql<number>`COUNT(*)` }).from(checkins).where(and(gte(checkins.createdAt, day.startsAt), lt(checkins.createdAt, day.endsAt))).get()?.n ?? 0),
-      Number(tx.select({ n: sql<number>`COUNT(*)` }).from(reports)
-        .where(and(gte(reports.createdAt, day.startsAt), lt(reports.createdAt, day.endsAt))).get()?.n ?? 0),
     ];
     return {
       businessDay: day,
@@ -405,7 +325,7 @@ export const adminRouter = createRouter({
         })),
         signinBudgetRemaining: centsToDollars(Number(signinPool?.balanceUnits ?? 0)),
       },
-      stats: { drawCount, signinToday, slotToday, reportToday },
+      stats: { drawCount, signinToday, slotToday },
       semantics: {
         zeroDailyLimit: "0 表示关闭对应功能，不表示无限次数",
         balanceThreshold: "兑换时用户当前余额必须严格低于门槛；等于门槛也会被拒绝",
@@ -468,7 +388,7 @@ export const adminRouter = createRouter({
       tx.update(signinFund).set({ balanceUnits: signinBudgetUnits, updatedAt: new Date() }).where(eq(signinFund.id, 1)).run();
       tx.insert(adminLogs).values({
         action: "更新娱乐中心配置",
-        detail: `业务日 UTC${input.businessTimezoneOffsetMinutes >= 0 ? "+" : ""}${input.businessTimezoneOffsetMinutes / 60} ${input.businessDayStartHour}:00；一次抽奖 ${input.drawEnabled ? "开" : "关"}；老虎机每日 ${input.slotDailyLimit} 次（0=关闭）；签到 ${input.signinEnabled ? "开" : "关"}；举报规则由举报管理页独立维护`,
+        detail: `业务日 UTC${input.businessTimezoneOffsetMinutes >= 0 ? "+" : ""}${input.businessTimezoneOffsetMinutes / 60} ${input.businessDayStartHour}:00；一次抽奖 ${input.drawEnabled ? "开" : "关"}；老虎机每日 ${input.slotDailyLimit} 次（0=关闭）；签到 ${input.signinEnabled ? "开" : "关"}`,
       }).run();
       return { ok: true };
     });
@@ -1423,7 +1343,7 @@ export const adminRouter = createRouter({
     .input(
       z.object({
         count: z.number().min(1).max(100),
-        type: z.enum(["invite", "redeem", "report"]).default("invite"),
+        type: z.enum(["invite", "redeem"]).default("invite"),
         amount: z.number().min(0.01).max(10_000).optional(),
         mode: z.enum(["single", "reusable"]).default("single"),
         maxUses: z.number().int().min(2).max(1_000_000).nullable().optional(),
@@ -1434,8 +1354,6 @@ export const adminRouter = createRouter({
     .mutation(async ({ input }) => {
       if (input.type === "redeem" && !input.amount)
         throw new TRPCError({ code: "BAD_REQUEST", message: "兑换码必须填写面额" });
-      if (input.type === "report" && (!input.amount || !Number.isSafeInteger(input.amount)))
-        throw new TRPCError({ code: "BAD_REQUEST", message: "举报卡必须填写 1–10000 的整数次数" });
       if (input.type === "redeem") {
         try { creditDollarsToUnits(input.amount!); }
         catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "兑换码金额无效" }); }
@@ -1446,10 +1364,6 @@ export const adminRouter = createRouter({
         throw new TRPCError({ code: "BAD_REQUEST", message: "余额门槛仅适用于兑换码" });
       if (input.type === "invite" && input.creditExpiresAt !== null && input.creditExpiresAt !== undefined)
         throw new TRPCError({ code: "BAD_REQUEST", message: "额度失效时间仅适用于兑换码" });
-      if (input.type === "report" && input.balanceBelow !== null && input.balanceBelow !== undefined)
-        throw new TRPCError({ code: "BAD_REQUEST", message: "举报卡不支持余额门槛" });
-      if (input.type === "report" && input.creditExpiresAt !== null && input.creditExpiresAt !== undefined)
-        throw new TRPCError({ code: "BAD_REQUEST", message: "举报卡永久有效，不支持失效时间" });
       const creditExpiresAt = input.type === "redeem" && input.creditExpiresAt ? new Date(input.creditExpiresAt) : null;
       if (creditExpiresAt && (!Number.isFinite(creditExpiresAt.getTime()) || creditExpiresAt.getTime() <= Date.now() + 60_000))
         throw new TRPCError({ code: "BAD_REQUEST", message: "额度失效时间必须至少晚于当前时间 1 分钟" });
@@ -1475,9 +1389,7 @@ export const adminRouter = createRouter({
         : "全局单次";
       const codeLabel = input.type === "redeem"
         ? `充值兑换码 $${input.amount}，${modeLabel}，余额门槛 ${input.balanceBelow === null || input.balanceBelow === undefined ? "无" : `< $${input.balanceBelow.toFixed(2)}`}，额度失效 ${creditExpiresAt ? creditExpiresAt.toISOString() : "永久"}`
-        : input.type === "report"
-          ? `举报卡 ${input.amount} 次（永久），${modeLabel}`
-          : "邀请码";
+        : "邀请码";
       await logAdmin("生成兑换码", `${codeLabel} × ${input.count}`);
       return { codes };
     }),
@@ -1493,7 +1405,7 @@ export const adminRouter = createRouter({
           ? isNotNull(inviteCodes.archivedAt)
           : undefined;
       const rows = await db.select().from(inviteCodes)
-        .where(condition)
+        .where(and(supportedInviteTypes, condition))
         .orderBy(desc(inviteCodes.createdAt)).limit(200);
       const auditCounts = await db.select({
         codeId: codeRedemptions.codeId,
@@ -1514,9 +1426,9 @@ export const adminRouter = createRouter({
 
   listInvitesPage: adminQuery.input(paginationInput.extend({
     status: z.enum(["active", "archived", "all"]).default("active"),
-    type: z.enum(["invite", "redeem", "report"]).optional(),
+    type: z.enum(["invite", "redeem"]).optional(),
   })).query(({ input }) => getDb().transaction((tx) => {
-    const conditions = [];
+    const conditions = [supportedInviteTypes];
     if (input.status === "active") conditions.push(isNull(inviteCodes.archivedAt));
     if (input.status === "archived") conditions.push(isNotNull(inviteCodes.archivedAt));
     if (input.type) conditions.push(eq(inviteCodes.type, input.type));
@@ -1545,7 +1457,7 @@ export const adminRouter = createRouter({
     id: z.number().int().positive(),
     balanceBelow: moneyInput.nullable(),
   })).mutation(({ input }) => getDb().transaction((tx) => {
-    const code = tx.select().from(inviteCodes).where(eq(inviteCodes.id, input.id)).limit(1).get();
+    const code = tx.select().from(inviteCodes).where(and(supportedInviteTypes, eq(inviteCodes.id, input.id))).limit(1).get();
     if (!code || code.archivedAt) throw new TRPCError({ code: "NOT_FOUND", message: "兑换码不存在或已归档" });
     if (code.type !== "redeem") throw new TRPCError({ code: "BAD_REQUEST", message: "余额门槛仅适用于兑换码" });
     tx.update(inviteCodes).set({ balanceBelow: input.balanceBelow }).where(eq(inviteCodes.id, code.id)).run();
@@ -1580,7 +1492,7 @@ export const adminRouter = createRouter({
       .leftJoin(users, eq(codeRedemptions.userId, users.id))
       .leftJoin(inviteCodes, eq(codeRedemptions.codeId, inviteCodes.id))
       .leftJoin(creditGrants, eq(creditGrants.redemptionId, codeRedemptions.id))
-      .where(input?.codeId ? eq(codeRedemptions.codeId, input.codeId) : undefined)
+      .where(and(eq(inviteCodes.type, "redeem"), input?.codeId ? eq(codeRedemptions.codeId, input.codeId) : undefined))
       .orderBy(desc(codeRedemptions.redeemedAt))
       .limit(200)),
 
@@ -1588,11 +1500,12 @@ export const adminRouter = createRouter({
     codeId: z.number().int().positive().optional(),
     userId: z.number().int().positive().optional(),
   })).query(({ input }) => getDb().transaction((tx) => {
-    const conditions = [];
+    const conditions = [eq(inviteCodes.type, "redeem")];
     if (input.codeId) conditions.push(eq(codeRedemptions.codeId, input.codeId));
     if (input.userId) conditions.push(eq(codeRedemptions.userId, input.userId));
     const where = conditions.length ? and(...conditions) : undefined;
-    const total = Number(tx.select({ n: sql<number>`COUNT(*)` }).from(codeRedemptions).where(where).get()?.n ?? 0);
+    const total = Number(tx.select({ n: sql<number>`COUNT(*)` }).from(codeRedemptions)
+      .innerJoin(inviteCodes, eq(codeRedemptions.codeId, inviteCodes.id)).where(where).get()?.n ?? 0);
     const { page, pageSize, offset } = resolvePagination(total, input.page, input.pageSize);
     const items = tx.select({
       id: codeRedemptions.id,
@@ -1621,7 +1534,7 @@ export const adminRouter = createRouter({
   })),
 
   deleteInvite: adminQuery.input(z.object({ id: z.number().int().positive() })).mutation(({ input }) => getDb().transaction((tx) => {
-    const code = tx.select().from(inviteCodes).where(eq(inviteCodes.id, input.id)).limit(1).get();
+    const code = tx.select().from(inviteCodes).where(and(supportedInviteTypes, eq(inviteCodes.id, input.id))).limit(1).get();
     if (!code) throw new TRPCError({ code: "NOT_FOUND", message: "码不存在或已被物理删除" });
     if (code.archivedAt) throw new TRPCError({ code: "CONFLICT", message: "该码已经归档，不能重复删除" });
     const auditCount = Number(tx.select({ count: sql<number>`COUNT(*)` }).from(codeRedemptions)
@@ -1659,11 +1572,13 @@ export const adminRouter = createRouter({
   previewUsedCodeCleanup: adminQuery.query(async () => {
     const db = getDb();
     const [eligible] = await db.select({ n: sql<number>`COUNT(*)` }).from(inviteCodes).where(and(
+      supportedInviteTypes,
       eq(inviteCodes.mode, "single"),
       isNotNull(inviteCodes.usedBy),
       isNull(inviteCodes.archivedAt),
     ));
     const [protectedReusable] = await db.select({ n: sql<number>`COUNT(*)` }).from(inviteCodes).where(and(
+      supportedInviteTypes,
       eq(inviteCodes.mode, "reusable"),
       sql`${inviteCodes.redemptionCount} > 0`,
       isNull(inviteCodes.archivedAt),
@@ -1683,6 +1598,7 @@ export const adminRouter = createRouter({
     }))
     .mutation(({ input }) => getDb().transaction((tx) => {
       const condition = and(
+        supportedInviteTypes,
         eq(inviteCodes.mode, "single"),
         isNotNull(inviteCodes.usedBy),
         isNull(inviteCodes.archivedAt),

@@ -19,7 +19,6 @@ import {
   USER_COOKIE,
 } from "../auth";
 import { groupNameSchema } from "@contracts/group-name";
-import { DEFAULT_REPORT_TAX_BASIS_POINTS, formatReportTaxPercent, MAX_REPORT_TAX_BASIS_POINTS } from "@contracts/report-tax";
 import { assertModuleAvailable } from "../queries/policies";
 
 export const authRouter = createRouter({
@@ -31,18 +30,9 @@ export const authRouter = createRouter({
     };
     const min = await p(SETTING_KEYS.drawMin, "5");
     const max = await p(SETTING_KEYS.drawMax, "10");
-    const storedReportTax = Number(await getSetting(
-      SETTING_KEYS.reportTaxBasisPoints,
-      String(DEFAULT_REPORT_TAX_BASIS_POINTS),
-    ));
-    const reportTaxBasisPoints = Number.isInteger(storedReportTax) && storedReportTax >= 0 && storedReportTax <= MAX_REPORT_TAX_BASIS_POINTS
-      ? storedReportTax
-      : DEFAULT_REPORT_TAX_BASIS_POINTS;
     return {
       drawMin: min,
       drawMax: Math.max(min, max),
-      reportTaxBasisPoints,
-      reportTaxPercent: formatReportTaxPercent(reportTaxBasisPoints),
     };
   }),
 

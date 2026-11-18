@@ -11,8 +11,8 @@ type ReadDb = Pick<BetterSQLite3Database<typeof schema>, "select">;
 type WriteDb = Pick<BetterSQLite3Database<typeof schema>, "select" | "insert" | "update">;
 
 export const CONTROL_MODULES = [
-  "login", "registration", "api", "transfer", "lending", "reporting",
-  "draw", "signin", "videoReward", "slot", "duel", "teamBattle",
+  "login", "registration", "api", "transfer", "lending",
+  "draw", "signin", "videoReward", "slot", "duel",
 ] as const;
 export type ControlModule = typeof CONTROL_MODULES[number];
 
@@ -22,13 +22,11 @@ const controlKeys: Record<ControlModule, string> = {
   api: SETTING_KEYS.apiEnabled,
   transfer: SETTING_KEYS.transferEnabled,
   lending: SETTING_KEYS.lendingEnabled,
-  reporting: SETTING_KEYS.reportingEnabled,
   draw: SETTING_KEYS.drawModuleEnabled,
   signin: SETTING_KEYS.signinModuleEnabled,
   videoReward: SETTING_KEYS.videoRewardModuleEnabled,
   slot: SETTING_KEYS.slotModuleEnabled,
   duel: SETTING_KEYS.duelModuleEnabled,
-  teamBattle: SETTING_KEYS.teamBattleModuleEnabled,
 };
 
 export function readControlState(db: ReadDb) {
@@ -61,14 +59,14 @@ export function readUserPolicy(db: ReadDb, userId: number) {
 
 const policyArea: Partial<Record<ControlModule, "api" | "finance" | "entertainment">> = {
   api: "api", transfer: "finance", lending: "finance",
-  reporting: "entertainment", draw: "entertainment", signin: "entertainment",
-  videoReward: "entertainment", slot: "entertainment", duel: "entertainment", teamBattle: "entertainment",
+  draw: "entertainment", signin: "entertainment",
+  videoReward: "entertainment", slot: "entertainment", duel: "entertainment",
 };
 
 const moduleLabels: Record<ControlModule, string> = {
   login: "登录", registration: "注册", api: "API 调用", transfer: "转账", lending: "借贷",
-  reporting: "举报", draw: "抽奖", signin: "签到", videoReward: "视频红包",
-  slot: "老虎机", duel: "决斗", teamBattle: "战队对抗",
+  draw: "抽奖", signin: "签到", videoReward: "视频红包",
+  slot: "老虎机", duel: "决斗",
 };
 
 export function frozenApiGroupIds(policy: { frozenApiGroupIds?: string | null }) {

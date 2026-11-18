@@ -7,14 +7,14 @@ import { eq } from "drizzle-orm";
 process.env.SQLITE_PATH = join(tmpdir(), `lucky-entertainment-${process.pid}-${Date.now()}.db`);
 
 describe("entertainment transactions and administration", () => {
-  it("enforces one-time draw, daily limits/signin, announcements, report closure and balance thresholds", async () => {
+  it("enforces one-time draw, daily limits/signin, announcements and balance thresholds", async () => {
     const [{ getDb }, schema, { appRouter }] = await Promise.all([
       import("../queries/connection"),
       import("../../db/schema"),
       import("../router"),
     ]);
     const {
-      users, sessions, adminSessions, draws, dailySignins, checkins, reports,
+      users, sessions, adminSessions, draws, dailySignins, checkins,
       inviteCodes, codeRedemptions, transactions, adminLogs,
     } = schema;
     const db = getDb();
@@ -60,13 +60,6 @@ describe("entertainment transactions and administration", () => {
       signinTiers: [{ reward: 1, probabilityPpm: 1_000_000 }],
       signinBudgetRemaining: 10,
     });
-    const reportRules = await admin.admin.reportSettings.get();
-    await admin.admin.reportSettings.update({
-      taxPercent: reportRules.taxPercent,
-      targetedDailyLimit: 0,
-      randomDailyLimit: 0,
-      successRatePercent: 100,
-    });
     expect(await admin.admin.getEntertainmentControl()).toMatchObject({
       config: { slotDailyLimit: 2, drawBudgetRemaining: 3 },
       semantics: { zeroDailyLimit: expect.stringContaining("关闭") },
@@ -103,15 +96,6 @@ describe("entertainment transactions and administration", () => {
     expect(await db.select().from(checkins).where(eq(checkins.userId, createdUsers[0].id))).toHaveLength(2);
     expect(await member1.member.checkinStatus()).toMatchObject({ dailyLimit: 2, used: 2, remaining: 0 });
 
-    await expect(member1.member.report({ requestId: randomUUID(), targetUserId: createdUsers[1].id })).rejects.toThrow("没有可用举报卡次数");
-    expect(await db.select().from(reports)).toHaveLength(0);
-    expect(await member1.member.reportQuota()).toMatchObject({ enabled: false, dailyLimit: 0, used: 0, remaining: 0 });
-    await admin.admin.reportSettings.update({ taxPercent: reportRules.taxPercent, targetedDailyLimit: 1, randomDailyLimit: 0, successRatePercent: 100 });
-    await expect(member1.member.report({ requestId: randomUUID(), targetUserId: 999_999 })).rejects.toThrow("不存在");
-    expect(await member1.member.reportQuota()).toMatchObject({ dailyLimit: 1, used: 0, remaining: 1 });
-    await member1.member.report({ requestId: randomUUID(), targetUserId: createdUsers[1].id });
-    expect(await member1.member.reportQuota()).toMatchObject({ dailyLimit: 1, used: 1, remaining: 0 });
-    await expect(member1.member.report({ requestId: randomUUID(), targetUserId: createdUsers[1].id })).rejects.toThrow("次数已经用完");
 
     const draft = await admin.admin.createAnnouncement({
       title: " 维护通知 ",
@@ -157,7 +141,6 @@ describe("entertainment transactions and administration", () => {
       draw: { participated: true },
       slot: { dailyLimit: 2, remaining: 0 },
       signin: { done: true },
-      report: { enabled: true, dailyLimit: 1 },
     });
     expect((await db.select().from(transactions)).length).toBeGreaterThanOrEqual(7);
     expect((await db.select().from(adminLogs)).some((row) => row.action === "更新娱乐中心配置")).toBe(true);

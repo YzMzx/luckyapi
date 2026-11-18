@@ -1,4 +1,5 @@
 import {
+  check,
   sqliteTable,
   text,
   integer,
@@ -6,6 +7,8 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
+
+import { sql } from "drizzle-orm";
 
 // 用户（Linux.do OAuth 登录）
 export const users = sqliteTable(
@@ -29,6 +32,32 @@ export const users = sqliteTable(
   },
   (t) => [uniqueIndex("users_linuxdo_id_idx").on(t.linuxdoId), uniqueIndex("users_group_name_idx").on(t.groupName)],
 );
+
+export const levelProfiles = sqliteTable("level_profiles", {
+  userId: integer("user_id").primaryKey().references(() => users.id),
+  totalExp: integer("total_exp").notNull().default(0),
+  equippedLevel: integer("equipped_level"),
+});
+
+export const experienceEvents = sqliteTable("experience_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id),
+  eventKey: text("event_key").notNull(),
+  amount: integer("amount").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (t) => [uniqueIndex("experience_events_user_key").on(t.userId, t.eventKey)]);
+
+export const levelBadges = sqliteTable("level_badges", {
+  level: integer("level").notNull(),
+  rank: integer("rank").notNull(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  eventId: integer("event_id").notNull().references(() => experienceEvents.id),
+  awardedAt: integer("awarded_at").notNull(),
+}, (t) => [
+  uniqueIndex("level_badges_seat").on(t.level, t.rank),
+  uniqueIndex("level_badges_owner").on(t.userId, t.level),
+  check("level_badges_rank", sql`${t.rank} BETWEEN 1 AND 3`),
+]);
 
 // OAuth 已授权但尚未完成必填注册资料的临时身份；不参与任何业务查询/统计。
 export const pendingUsers = sqliteTable(
@@ -111,9 +140,9 @@ export const inviteCodes = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     code: text("code").notNull(),
-    // invite = 注册邀请码；redeem = 充值兑换码；report = 永久举报次数卡
-    type: text("type", { enum: ["invite", "redeem", "report"] }).notNull().default("invite"),
-    // 充值码为美元面额；举报卡为整数次数
+    // invite = 注册邀请码；redeem = 充值兑换码
+    type: text("type", { enum: ["invite", "redeem"] }).notNull().default("invite"),
+    // 充值码的美元面额
     amount: real("amount"),
     // single = 全局仅一次；reusable = 多账号可用，但每个账号仅一次
     mode: text("mode", { enum: ["single", "reusable"] }).notNull().default("single"),
@@ -151,35 +180,6 @@ export const codeRedemptions = sqliteTable(
     uniqueIndex("code_redemptions_code_user_unique").on(t.codeId, t.userId),
     index("code_redemptions_code_idx").on(t.codeId),
     index("code_redemptions_user_idx").on(t.userId),
-  ],
-);
-
-// 用户永久举报卡次数。每日免费次数耗尽后才会原子消耗这里的次数。
-export const reportCardBalances = sqliteTable("report_card_balances", {
-  userId: integer("user_id").primaryKey(),
-  grantedCount: integer("granted_count").notNull().default(0),
-  consumedCount: integer("consumed_count").notNull().default(0),
-  remainingCount: integer("remaining_count").notNull().default(0),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
-});
-
-export const reportCardLedger = sqliteTable(
-  "report_card_ledger",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    userId: integer("user_id").notNull(),
-    type: text("type", { enum: ["redeem", "consume"] }).notNull(),
-    amount: integer("amount").notNull(),
-    remainingAfter: integer("remaining_after").notNull(),
-    redemptionId: integer("redemption_id"),
-    reportRequestId: text("report_request_id"),
-    note: text("note").notNull().default(""),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
-  },
-  (t) => [
-    index("report_card_ledger_user_idx").on(t.userId, t.id),
-    uniqueIndex("report_card_ledger_redemption_unique").on(t.redemptionId),
-    uniqueIndex("report_card_ledger_request_unique").on(t.reportRequestId),
   ],
 );
 
@@ -443,8 +443,8 @@ export const transactions = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     userId: integer("user_id").notNull(),
-    // draw=抽奖 checkin=签到 video_reward=看视频红包 report=举报 redeem=兑换 adjust=管理员调整 usage=调用扣费
-    kind: text("kind", { enum: ["draw", "checkin", "video_reward", "report", "redeem", "credit_expire", "adjust", "usage", "duel", "team_battle", "permanent_debit", "transfer_out", "transfer_in", "loan_disbursement", "loan_due", "loan_repayment", "loan_offer_refund"] }).notNull(),
+    // draw=抽奖 checkin=签到 video_reward=看视频红包 redeem=兑换 adjust=管理员调整 usage=调用扣费
+    kind: text("kind", { enum: ["draw", "checkin", "video_reward", "redeem", "credit_expire", "adjust", "usage", "duel", "permanent_debit", "transfer_out", "transfer_in", "loan_disbursement", "loan_due", "loan_repayment", "loan_offer_refund"] }).notNull(),
     // 有符号金额（收入为正，支出为负）
     amount: real("amount").notNull(),
     balanceAfter: real("balance_after").notNull(),
@@ -498,40 +498,6 @@ export const usageLogs = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
   },
   (t) => [index("usage_user_idx").on(t.userId)],
-);
-
-// 举报记录
-export const reports = sqliteTable(
-  "reports",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    requestId: text("request_id"),
-    reporterId: integer("reporter_id").notNull(),
-    targetId: integer("target_id").notNull(),
-    // targeted = 指定举报；random = 随机举报
-    kind: text("kind", { enum: ["targeted", "random"] }).notNull().default("targeted"),
-    success: integer("success", { mode: "boolean" }).notNull().default(false),
-    // 历史兼容：amount 始终等于当次获益方实际到账
-    amount: real("amount").notNull().default(0),
-    // 仅新结算写入；历史记录保持 null，不依据当前余额反推。
-    reporterBalanceBefore: real("reporter_balance_before"),
-    targetBalanceBefore: real("target_balance_before"),
-    lowerBalance: real("lower_balance"),
-    grossAmount: real("gross_amount").notNull().default(0),
-    taxBasisPoints: integer("tax_basis_points").notNull().default(500),
-    // 举报税（从获益方扣除，烧掉）
-    tax: real("tax").notNull().default(0),
-    creditedAmount: real("credited_amount").notNull().default(0),
-    deductedAmount: real("deducted_amount").notNull().default(0),
-    quotaSource: text("quota_source", { enum: ["daily", "card"] }).notNull().default("daily"),
-    successBasisPoints: integer("success_basis_points").notNull().default(4000),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
-  },
-  (t) => [
-    uniqueIndex("reports_request_id_unique").on(t.requestId),
-    index("reports_reporter_idx").on(t.reporterId),
-    index("reports_target_idx").on(t.targetId),
-  ],
 );
 
 // 不可变老虎机配置版本；规则 JSON 使用整数概率、倍率基点和金额单位。
@@ -811,128 +777,6 @@ export const duelLedger = sqliteTable(
   (t) => [index("duel_ledger_room_idx").on(t.roomId, t.id), index("duel_ledger_user_idx").on(t.userId, t.id)],
 );
 
-// 战队对抗与原骰子/二十一点房完全隔离；所有押注均以 10^-6 美元整数单位托管。
-export const teamBattleConfigs = sqliteTable("team_battle_configs", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  version: integer("version").notNull(),
-  active: integer("active", { mode: "boolean" }).notNull().default(true),
-  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-  singleBetLimitUnits: integer("single_bet_limit_units").notNull().default(10_000_000),
-  userBetLimitUnits: integer("user_bet_limit_units").notNull().default(50_000_000),
-  roomBetLimitUnits: integer("room_bet_limit_units").notNull().default(500_000_000),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
-}, (t) => [uniqueIndex("team_battle_configs_version_unique").on(t.version), index("team_battle_configs_active_idx").on(t.active)]);
-
-export const teamBattleRooms = sqliteTable("team_battle_rooms", {
-  id: text("id").primaryKey(),
-  code: text("code").notNull(),
-  mode: text("mode", { enum: ["1v1", "3v3", "5v5"] }).notNull(),
-  visibility: text("visibility", { enum: ["public", "private"] }).notNull().default("public"),
-  ownerId: integer("owner_id").notNull(),
-  status: text("status", { enum: ["lobby", "betting", "voting", "settled", "disputed", "cancelled", "refunded"] }).notNull().default("lobby"),
-  seatsPerTeam: integer("seats_per_team").notNull(),
-  rosterLocked: integer("roster_locked", { mode: "boolean" }).notNull().default(false),
-  configVersion: integer("config_version").notNull(),
-  configSnapshotJson: text("config_snapshot_json").notNull(),
-  voteRound: integer("vote_round").notNull().default(1),
-  winnerTeam: text("winner_team", { enum: ["A", "B"] }),
-  poolAUnits: integer("pool_a_units").notNull().default(0),
-  poolBUnits: integer("pool_b_units").notNull().default(0),
-  losingPoolTaxUnits: integer("losing_pool_tax_units").notNull().default(0),
-  playerTaxUnits: integer("player_tax_units").notNull().default(0),
-  platformTaxUnits: integer("platform_tax_units").notNull().default(0),
-  payoutUnits: integer("payout_units").notNull().default(0),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
-  lockedAt: integer("locked_at", { mode: "timestamp_ms" }),
-  bettingClosedAt: integer("betting_closed_at", { mode: "timestamp_ms" }),
-  finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
-  disputeReason: text("dispute_reason"),
-}, (t) => [uniqueIndex("team_battle_rooms_code_unique").on(t.code), index("team_battle_rooms_status_idx").on(t.status, t.createdAt)]);
-
-export const teamBattlePlayers = sqliteTable("team_battle_players", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  roomId: text("room_id").notNull(),
-  userId: integer("user_id").notNull(),
-  team: text("team", { enum: ["A", "B"] }).notNull(),
-  seat: integer("seat").notNull(),
-  status: text("status", { enum: ["joined", "exited"] }).notNull().default("joined"),
-  taxShareUnits: integer("tax_share_units").notNull().default(0),
-  joinedAt: integer("joined_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
-  exitedAt: integer("exited_at", { mode: "timestamp_ms" }),
-}, (t) => [
-  uniqueIndex("team_battle_players_room_user_unique").on(t.roomId, t.userId),
-  uniqueIndex("team_battle_players_room_team_seat_unique").on(t.roomId, t.team, t.seat),
-  index("team_battle_players_user_idx").on(t.userId, t.joinedAt),
-]);
-
-export const teamBattleBets = sqliteTable("team_battle_bets", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  requestId: text("request_id").notNull(),
-  roomId: text("room_id").notNull(),
-  userId: integer("user_id").notNull(),
-  team: text("team", { enum: ["A", "B"] }).notNull(),
-  amountUnits: integer("amount_units").notNull(),
-  poolABeforeUnits: integer("pool_a_before_units").notNull(),
-  poolBBeforeUnits: integer("pool_b_before_units").notNull(),
-  projectedReturnPpm: integer("projected_return_ppm"),
-  status: text("status", { enum: ["escrowed", "won", "lost", "refunded"] }).notNull().default("escrowed"),
-  payoutUnits: integer("payout_units").notNull().default(0),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
-  settledAt: integer("settled_at", { mode: "timestamp_ms" }),
-}, (t) => [
-  uniqueIndex("team_battle_bets_request_unique").on(t.requestId),
-  index("team_battle_bets_room_idx").on(t.roomId, t.id),
-  index("team_battle_bets_user_idx").on(t.userId, t.id),
-]);
-
-export const teamBattleVotes = sqliteTable("team_battle_votes", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  requestId: text("request_id").notNull(),
-  roomId: text("room_id").notNull(),
-  voteRound: integer("vote_round").notNull(),
-  userId: integer("user_id").notNull(),
-  winnerTeam: text("winner_team", { enum: ["A", "B"] }).notNull(),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
-}, (t) => [
-  uniqueIndex("team_battle_votes_request_unique").on(t.requestId),
-  uniqueIndex("team_battle_votes_room_round_user_unique").on(t.roomId, t.voteRound, t.userId),
-  index("team_battle_votes_room_idx").on(t.roomId, t.voteRound),
-]);
-
-export const teamBattleEvents = sqliteTable("team_battle_events", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  roomId: text("room_id").notNull(),
-  seq: integer("seq").notNull(),
-  requestId: text("request_id"),
-  userId: integer("user_id"),
-  type: text("type").notNull(),
-  payloadJson: text("payload_json").notNull().default("{}"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
-}, (t) => [
-  uniqueIndex("team_battle_events_room_seq_unique").on(t.roomId, t.seq),
-  uniqueIndex("team_battle_events_request_unique").on(t.requestId),
-  index("team_battle_events_room_idx").on(t.roomId, t.id),
-]);
-
-export const teamBattleFund = sqliteTable("team_battle_fund", {
-  id: integer("id").primaryKey(),
-  balanceUnits: integer("balance_units").notNull().default(0),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
-});
-
-export const teamBattleLedger = sqliteTable("team_battle_ledger", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  roomId: text("room_id").notNull(),
-  userId: integer("user_id"),
-  requestId: text("request_id"),
-  type: text("type").notNull(),
-  amountUnits: integer("amount_units").notNull(),
-  userBalanceAfterUnits: integer("user_balance_after_units"),
-  fundBalanceAfterUnits: integer("fund_balance_after_units"),
-  note: text("note").notNull().default(""),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
-}, (t) => [index("team_battle_ledger_room_idx").on(t.roomId, t.id), index("team_battle_ledger_user_idx").on(t.userId, t.id)]);
-
 // 玩家资金转移（收款人按 Linux.do 登录记录中的账号 ID 定位）
 export const moneyTransfers = sqliteTable("money_transfers", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -1015,5 +859,4 @@ export type UsageLog = typeof usageLogs.$inferSelect;
 export type Draw = typeof draws.$inferSelect;
 export type InviteCode = typeof inviteCodes.$inferSelect;
 export type CodeRedemption = typeof codeRedemptions.$inferSelect;
-export type Report = typeof reports.$inferSelect;
 export type Group = typeof groups.$inferSelect;

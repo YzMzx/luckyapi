@@ -10,7 +10,7 @@ import { DuelBoard } from "@/components/home/DuelBoard";
 import { VideoRedEnvelopeDialog, VideoRedEnvelopeEntry } from "@/components/VideoRedEnvelope";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
-  Dices, Spade, Cherry, CalendarCheck, Gift, Boxes, KeyRound, Trophy, Flag,
+  Dices, Spade, Cherry, CalendarCheck, Gift, Boxes, KeyRound, Trophy,
   ShieldCheck, Percent, ReceiptText, ArrowRight,
 } from "lucide-react";
 import { mergeVideoSession } from "@/lib/video-reward-state";
@@ -32,7 +32,6 @@ const SERVICES = [
   { to: "/models", icon: Boxes, title: "模型广场", desc: "全部上游模型与定价一览" },
   { to: "/console", icon: KeyRound, title: "API 控制台", desc: "生成 Key、查看调用与额度流水" },
   { to: "/leaderboard", icon: Trophy, title: "榜单中心", desc: "额度、决斗战绩与借贷信用排行" },
-  { to: "/report", icon: Flag, title: "举报中心", desc: "指定或随机举报，结算记录全程可查" },
 ] as const;
 
 const FAIRNESS = [
@@ -280,7 +279,7 @@ export default function Home() {
         <section>
           <p className="text-xs font-bold tracking-[0.4em] text-[#af915f]">SERVICES</p>
           <h2 className="mt-2 text-2xl font-black text-[#fce1b6]">额度之外</h2>
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-6 grid gap-4 sm:grid-cols-3">
             {SERVICES.map((s) => (
               <Link key={s.to} to={s.to} className="card-luxe group rounded-2xl p-5">
                 <s.icon className="h-5 w-5 text-[#FFB700]" />

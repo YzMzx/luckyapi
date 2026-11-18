@@ -2,17 +2,15 @@ import { z } from "zod";
 import { randomInt as secureRandomInt } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { eq, and, or, asc, desc, gt, lt, sql, gte, isNull, isNotNull, ne } from "drizzle-orm";
-import { alias } from "drizzle-orm/sqlite-core";
 import { getDb } from "../queries/connection";
 import { recordTx } from "../queries/ledger";
-import { CREDIT_GRANT_SCALE, createTimedCreditGrant, creditDollarsToUnits, debitPermanentBalance, debitUserBalance } from "../queries/credit-grants";
+import { CREDIT_GRANT_SCALE, createTimedCreditGrant, creditDollarsToUnits, debitUserBalance } from "../queries/credit-grants";
 import {
-  apiKeys, usageLogs, users, reports, models, groups, upstreams, inviteCodes,
+  apiKeys, usageLogs, users, models, groups, upstreams, inviteCodes,
   codeRedemptions, checkins, transactions, slotFund, slotFundLedger, slotPromotions, creditGrants,
-  reportCardBalances, reportCardLedger,
 } from "../../db/schema";
 import { createRouter } from "../middleware";
-import { assertModuleAvailable, readControlState, readUserPolicy } from "../queries/policies";
+import { assertModuleAvailable, readUserPolicy } from "../queries/policies";
 import { memberQuery, randomToken, sha256 } from "../auth";
 import { getSetting, SETTING_KEYS } from "../settings";
 import { groupNameSchema } from "@contracts/group-name";
@@ -27,14 +25,7 @@ import {
   type SlotSymbols,
 } from "@contracts/slot-machine";
 import { publicSlotState, resolveSlotState } from "../queries/slot-control";
-import { currentBusinessDay, readDailyLimits, readReportRules } from "../queries/entertainment-control";
-import {
-  calculateReportGross,
-  calculateReportSettlement,
-  DEFAULT_REPORT_TAX_BASIS_POINTS,
-  formatReportTaxPercent,
-  MAX_REPORT_TAX_BASIS_POINTS,
-} from "@contracts/report-tax";
+import { currentBusinessDay, readDailyLimits } from "../queries/entertainment-control";
 import { paginatedResult, paginationInput, paginationParams, resolvePagination } from "../pagination";
 
 function unsettledGrantUnitsSql() {
@@ -80,7 +71,7 @@ function slotRecord(row: typeof checkins.$inferSelect) {
 }
 
 export const memberRouter = createRouter({
-  // ---- 公开身份（榜单 / 举报记录使用） ----
+  // ---- 公开身份（榜单使用） ----
   updateGroupName: memberQuery
     .input(z.object({ groupName: groupNameSchema }))
     .mutation(({ ctx, input }) => {
@@ -399,8 +390,6 @@ export const memberRouter = createRouter({
           avatarUrl: users.avatarUrl,
           balance: permanentAvailable,
           createdAt: users.createdAt,
-          reportCount: sql<number>`(SELECT COUNT(*) FROM reports WHERE reports.reporter_id = ${users.id})`,
-          reportWins: sql<number>`COALESCE((SELECT SUM(success) FROM reports WHERE reports.reporter_id = ${users.id}), 0)`,
         })
         .from(users)
         .where(eligible)
@@ -457,17 +446,14 @@ export const memberRouter = createRouter({
       return db.transaction((tx) => {
         const code = tx.select().from(inviteCodes).where(and(
           eq(inviteCodes.code, normalizedCode),
-          or(eq(inviteCodes.type, "redeem"), eq(inviteCodes.type, "report")),
+          eq(inviteCodes.type, "redeem"),
           isNull(inviteCodes.archivedAt),
         )).limit(1).get();
         const amount = Number(code?.amount ?? 0);
         if (!code || !Number.isFinite(amount) || amount <= 0) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "兑换码无效" });
         }
-        const isReportCard = code.type === "report";
-        if (isReportCard && (!Number.isSafeInteger(amount) || amount < 1 || amount > 10_000))
-          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "举报卡次数配置无效，请联系管理员" });
-        const creditExpiresAt = isReportCard ? null : code.creditExpiresAt;
+        const creditExpiresAt = code.creditExpiresAt;
         if (creditExpiresAt && creditExpiresAt.getTime() <= Date.now())
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "该兑换码的额度失效时间已到，不能再兑换" });
         const me = tx.select({ balance: users.balance }).from(users).where(eq(users.id, ctx.user.id)).limit(1).get();
@@ -476,7 +462,7 @@ export const memberRouter = createRouter({
         const balanceBelow = code.balanceBelow === null ? null : Number(code.balanceBelow);
         if (balanceBelow !== null && (!Number.isFinite(balanceBelow) || balanceBelow < 0))
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "兑换码余额门槛配置无效，请联系管理员" });
-        if (!isReportCard && balanceBelow !== null && balanceBefore >= balanceBelow) {
+        if (balanceBelow !== null && balanceBefore >= balanceBelow) {
           throw new TRPCError({
             code: "PRECONDITION_FAILED",
             message: `当前余额 $${balanceBefore.toFixed(2)}；此码仅限余额严格低于 $${balanceBelow.toFixed(2)} 时兑换`,
@@ -525,30 +511,7 @@ export const memberRouter = createRouter({
         } catch {
           throw new TRPCError({ code: "BAD_REQUEST", message: "你已经兑换过这个兑换码" });
         }
-        if (isReportCard) {
-          tx.insert(reportCardBalances).values({
-            userId: ctx.user.id,
-            grantedCount: amount,
-            remainingCount: amount,
-            updatedAt: new Date(),
-          }).onConflictDoUpdate({
-            target: reportCardBalances.userId,
-            set: {
-              grantedCount: sql`${reportCardBalances.grantedCount} + ${amount}`,
-              remainingCount: sql`${reportCardBalances.remainingCount} + ${amount}`,
-              updatedAt: new Date(),
-            },
-          }).run();
-          const balance = tx.select().from(reportCardBalances).where(eq(reportCardBalances.userId, ctx.user.id)).get()!;
-          tx.insert(reportCardLedger).values({
-            userId: ctx.user.id,
-            type: "redeem",
-            amount,
-            remainingAfter: balance.remainingCount,
-            redemptionId: redemption.id,
-            note: `兑换举报卡 ${normalizedCode}，永久增加 ${amount} 次`,
-          }).run();
-        } else if (creditExpiresAt) createTimedCreditGrant(tx, {
+        if (creditExpiresAt) createTimedCreditGrant(tx, {
           redemptionId: redemption.id,
           codeId: code.id,
           code: code.code,
@@ -556,10 +519,8 @@ export const memberRouter = createRouter({
           amountUnits: creditDollarsToUnits(amount),
           expiresAt: creditExpiresAt,
         });
-        if (!isReportCard) {
-          tx.update(users).set({ balance: sql`balance + ${amount}` }).where(eq(users.id, ctx.user.id)).run();
-          recordTx(tx, ctx.user.id, "redeem", amount, `兑换码 ${normalizedCode}${creditExpiresAt ? `（额度失效：${creditExpiresAt.toISOString()}）` : "（永久额度）"}`);
-        }
+        tx.update(users).set({ balance: sql`balance + ${amount}` }).where(eq(users.id, ctx.user.id)).run();
+        recordTx(tx, ctx.user.id, "redeem", amount, `兑换码 ${normalizedCode}${creditExpiresAt ? `（额度失效：${creditExpiresAt.toISOString()}）` : "（永久额度）"}`);
         const usedCount = code.redemptionCount + 1;
         const remainingUses = code.mode === "reusable" && code.maxUses !== null
           ? Math.max(0, code.maxUses - usedCount)
@@ -571,10 +532,8 @@ export const memberRouter = createRouter({
           balanceBefore,
           balanceBelow,
           creditExpiresAt,
-          rewardType: isReportCard ? "report_card" as const : "credit" as const,
-          message: isReportCard
-            ? `兑换成功，永久举报次数 +${amount}`
-            : creditExpiresAt
+          rewardType: "credit" as const,
+          message: creditExpiresAt
             ? `兑换成功，$${amount.toFixed(2)} 已到账；剩余额度将于 ${creditExpiresAt.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}（北京时间）失效`
             : `兑换成功，$${amount.toFixed(2)} 永久额度已到账`,
         };
@@ -752,354 +711,13 @@ export const memberRouter = createRouter({
     });
   }),
 
-  // ---- 举报：指定/随机独立每日次数，免费次数耗尽后消耗永久举报卡 ----
-  report: memberQuery
-    .input(z.object({ requestId: z.string().uuid(), targetUserId: z.number().optional() }))
-    .mutation(async ({ ctx, input }) => {
-      assertModuleAvailable(getDb(), "reporting", ctx.user.id);
-      const kind = input.targetUserId ? ("targeted" as const) : ("random" as const);
-      if (input.targetUserId === ctx.user.id)
-        throw new TRPCError({ code: "BAD_REQUEST", message: "不能举报自己" });
-      const db = getDb();
-      const configuredTax = Number(await getSetting(
-        SETTING_KEYS.reportTaxBasisPoints,
-        String(DEFAULT_REPORT_TAX_BASIS_POINTS),
-      ));
-      const taxBasisPoints = Number.isInteger(configuredTax) && configuredTax >= 0 && configuredTax <= MAX_REPORT_TAX_BASIS_POINTS
-        ? configuredTax
-        : DEFAULT_REPORT_TAX_BASIS_POINTS;
-      const taxPercent = formatReportTaxPercent(taxBasisPoints);
-
-      // 事务内完成配额检查 + 结算（better-sqlite3 同步事务）
-      return db.transaction((tx) => {
-        const existing = tx.select().from(reports).where(eq(reports.requestId, input.requestId)).limit(1).get();
-        if (existing) {
-          if (existing.reporterId !== ctx.user.id)
-            throw new TRPCError({ code: "CONFLICT", message: "请求编号已被占用" });
-          const existingTarget = tx.select().from(users).where(eq(users.id, existing.targetId)).limit(1).get();
-          return {
-            success: existing.success,
-            amount: existing.creditedAmount,
-            reporterBalanceBefore: existing.reporterBalanceBefore,
-            targetBalanceBefore: existing.targetBalanceBefore,
-            lowerBalance: existing.lowerBalance,
-            grossAmount: existing.grossAmount,
-            tax: existing.tax,
-            taxBasisPoints: existing.taxBasisPoints,
-            taxRatePercent: formatReportTaxPercent(existing.taxBasisPoints),
-            creditedAmount: existing.creditedAmount,
-            deductedAmount: existing.deductedAmount,
-            quotaSource: existing.quotaSource,
-            targetName: existingTarget?.groupName ?? existingTarget?.username ?? "未知",
-            idempotent: true,
-            title: existing.success ? "举报成功" : "非必要不举报",
-            message: existing.success
-              ? `税前 $${existing.grossAmount.toFixed(2)}，扣 ${formatReportTaxPercent(existing.taxBasisPoints)}% 税后到账 $${existing.creditedAmount.toFixed(2)}`
-              : `本次举报未成立，你被扣除 $${existing.deductedAmount.toFixed(2)}，对方税后到账 $${existing.creditedAmount.toFixed(2)}`,
-          };
-        }
-        const day = currentBusinessDay(tx);
-        const rules = readReportRules(tx);
-        const quotaStartsAt = rules.quotaResetAt > day.startsAt && rules.quotaResetAt < day.endsAt
-          ? rules.quotaResetAt
-          : day.startsAt;
-        const limit = kind === "targeted" ? rules.targetedDailyLimit : rules.randomDailyLimit;
-        const used = tx
-          .select({ n: sql<number>`COUNT(*)` })
-          .from(reports)
-          .where(and(
-            eq(reports.reporterId, ctx.user.id),
-            eq(reports.kind, kind),
-            gte(reports.createdAt, quotaStartsAt),
-            lt(reports.createdAt, day.endsAt),
-            eq(reports.quotaSource, "daily"),
-          ))
-          .all()[0].n;
-        const card = tx.select().from(reportCardBalances).where(eq(reportCardBalances.userId, ctx.user.id)).get();
-        const useCard = used >= limit;
-        if (useCard && Number(card?.remainingCount ?? 0) <= 0)
-          throw new TRPCError({ code: "BAD_REQUEST", message: `今天的${kind === "targeted" ? "指定" : "随机"}举报次数已经用完，且没有可用举报卡次数` });
-
-        const reporter = tx.select().from(users).where(eq(users.id, ctx.user.id)).limit(1).all()[0];
-        const settlementNow = new Date();
-        const reporterPermanent = readPermanentAvailable(tx, reporter.id, Number(reporter.balance));
-        if (reporterPermanent <= 0)
-          throw new TRPCError({ code: "BAD_REQUEST", message: "你的永久可用额度必须大于 0 才能举报" });
-
-        let target: typeof users.$inferSelect | undefined;
-        if (kind === "targeted") {
-          target = tx.select().from(users).where(eq(users.id, input.targetUserId!)).limit(1).all()[0];
-          if (!target || !target.groupName) throw new TRPCError({ code: "NOT_FOUND", message: "对方不存在" });
-        } else {
-          // 随机候选只允许永久可用额度为正；临时额度不能使用户成为举报目标。
-          const candidatePermanent = permanentAvailableSql();
-          const candidates = tx
-            .select()
-            .from(users)
-            .where(and(gt(candidatePermanent, 0), ne(users.id, ctx.user.id), eq(users.banned, false), isNotNull(users.groupName)))
-            .all();
-          if (!candidates.length) throw new TRPCError({ code: "BAD_REQUEST", message: "目前没有可举报的对象" });
-          target = candidates[secureRandomInt(candidates.length)];
-        }
-        const targetPermanent = readPermanentAvailable(tx, target.id, Number(target.balance));
-        if (target.banned || !target.groupName || targetPermanent <= 0)
-          throw new TRPCError({ code: "BAD_REQUEST", message: "只能举报永久可用额度大于 0 的正式用户" });
-
-        // 结算基数只看永久可用额度；临时额度不能参与风险计算或被洗成永久额度。
-        const risk = calculateReportGross(reporterPermanent, targetPermanent);
-        const gross = risk.grossAmount;
-        if (gross <= 0)
-          throw new TRPCError({ code: "BAD_REQUEST", message: "双方较低余额不足，没有可结算的举报额度" });
-
-        const quotaSource = useCard ? "card" as const : "daily" as const;
-        if (useCard) {
-          const consumed = tx.update(reportCardBalances).set({
-            consumedCount: sql`${reportCardBalances.consumedCount} + 1`,
-            remainingCount: sql`${reportCardBalances.remainingCount} - 1`,
-            updatedAt: new Date(),
-          }).where(and(eq(reportCardBalances.userId, ctx.user.id), gt(reportCardBalances.remainingCount, 0))).run();
-          if (consumed.changes !== 1) throw new TRPCError({ code: "CONFLICT", message: "举报卡次数已被其他请求使用，请重试" });
-          const after = tx.select().from(reportCardBalances).where(eq(reportCardBalances.userId, ctx.user.id)).get()!;
-          tx.insert(reportCardLedger).values({
-            userId: ctx.user.id,
-            type: "consume",
-            amount: -1,
-            remainingAfter: after.remainingCount,
-            reportRequestId: input.requestId,
-            note: `${kind === "targeted" ? "指定" : "随机"}举报消耗 1 次举报卡`,
-          }).run();
-        }
-        const success = secureRandomInt(10_000) < rules.successBasisPoints;
-        if (success) {
-          const settlement = calculateReportSettlement(gross, taxBasisPoints);
-          debitPermanentBalance(tx, { userId: target.id, amount: gross, note: `被「${reporter.groupName ?? reporter.username}」举报成功`, kind: "report", now: settlementNow });
-          tx.update(users).set({ balance: sql`balance + ${settlement.creditedAmount}` }).where(eq(users.id, reporter.id)).run();
-          recordTx(tx, reporter.id, "report", settlement.creditedAmount, `举报「${target.groupName ?? target.username}」成功（税前 $${gross.toFixed(2)}，税率 ${taxPercent}%）`);
-          tx.insert(reports).values({
-            requestId: input.requestId,
-            reporterId: reporter.id,
-            targetId: target.id,
-            kind,
-            success: true,
-            amount: settlement.creditedAmount,
-            reporterBalanceBefore: risk.reporterBalanceBefore,
-            targetBalanceBefore: risk.targetBalanceBefore,
-            lowerBalance: risk.lowerBalance,
-            grossAmount: settlement.grossAmount,
-            taxBasisPoints,
-            tax: settlement.taxAmount,
-            creditedAmount: settlement.creditedAmount,
-            deductedAmount: settlement.deductedAmount,
-            quotaSource,
-            successBasisPoints: rules.successBasisPoints,
-          }).run();
-          return {
-            success: true,
-            amount: settlement.creditedAmount,
-            ...risk,
-            ...settlement,
-            tax: settlement.taxAmount,
-            taxRatePercent: taxPercent,
-            targetName: target.groupName ?? target.username,
-            idempotent: false,
-            quotaSource,
-            title: "举报成功",
-            message: `税前 $${gross.toFixed(2)}，扣 ${taxPercent}% 税后 +$${settlement.creditedAmount.toFixed(2)}`,
-          };
-        }
-        const settlement = calculateReportSettlement(gross, taxBasisPoints);
-        debitPermanentBalance(tx, { userId: reporter.id, amount: gross, note: `举报「${target.groupName ?? target.username}」失败`, kind: "report", now: settlementNow });
-        tx.update(users).set({ balance: sql`balance + ${settlement.creditedAmount}` }).where(eq(users.id, target.id)).run();
-        recordTx(tx, target.id, "report", settlement.creditedAmount, `「${reporter.groupName ?? reporter.username}」举报你失败，补偿入账（税前 $${gross.toFixed(2)}，税率 ${taxPercent}%）`);
-        tx.insert(reports).values({
-          requestId: input.requestId,
-          reporterId: reporter.id,
-          targetId: target.id,
-          kind,
-          success: false,
-          amount: settlement.creditedAmount,
-          reporterBalanceBefore: risk.reporterBalanceBefore,
-          targetBalanceBefore: risk.targetBalanceBefore,
-          lowerBalance: risk.lowerBalance,
-          grossAmount: settlement.grossAmount,
-          taxBasisPoints,
-          tax: settlement.taxAmount,
-          creditedAmount: settlement.creditedAmount,
-          deductedAmount: settlement.deductedAmount,
-          quotaSource,
-          successBasisPoints: rules.successBasisPoints,
-        }).run();
-        return {
-          success: false,
-          amount: settlement.creditedAmount,
-          ...risk,
-          ...settlement,
-          tax: settlement.taxAmount,
-          taxRatePercent: taxPercent,
-          targetName: target.groupName ?? target.username,
-          idempotent: false,
-          quotaSource,
-          title: "非必要不举报",
-          message: `本次举报未成立，你被扣除 $${gross.toFixed(2)}，对方扣 ${taxPercent}% 税后得 $${settlement.creditedAmount.toFixed(2)}`,
-        };
-      });
-    }),
-
-  reportQuota: memberQuery.query(async ({ ctx }) => {
-    const quota = getDb().transaction((tx) => {
-      const controls = readControlState(tx);
-      const policy = readUserPolicy(tx, ctx.user.id);
-      const day = currentBusinessDay(tx);
-      const rules = readReportRules(tx);
-      const quotaStartsAt = rules.quotaResetAt > day.startsAt && rules.quotaResetAt < day.endsAt ? rules.quotaResetAt : day.startsAt;
-      const rows = tx.select({ kind: reports.kind, n: sql<number>`COUNT(*)` })
-        .from(reports)
-        .where(and(
-          eq(reports.reporterId, ctx.user.id),
-          gte(reports.createdAt, quotaStartsAt),
-          lt(reports.createdAt, day.endsAt),
-          eq(reports.quotaSource, "daily"),
-        ))
-        .groupBy(reports.kind).all();
-      const byKind = Object.fromEntries(rows.map((row) => [row.kind, Number(row.n)]));
-      const used = (byKind.targeted ?? 0) + (byKind.random ?? 0);
-      const current = tx.select({ balance: users.balance }).from(users).where(eq(users.id, ctx.user.id)).get();
-      const permanentAvailable = readPermanentAvailable(tx, ctx.user.id, Number(current?.balance ?? 0));
-      const cardRemaining = Number(tx.select({ n: reportCardBalances.remainingCount }).from(reportCardBalances).where(eq(reportCardBalances.userId, ctx.user.id)).get()?.n ?? 0);
-      return { controls, policy, day, rules, byKind, used, permanentAvailable, cardRemaining };
-    });
-    const rawTax = Number(await getSetting(SETTING_KEYS.reportTaxBasisPoints, String(DEFAULT_REPORT_TAX_BASIS_POINTS)));
-    const taxBasisPoints = Number.isInteger(rawTax) && rawTax >= 0 && rawTax <= MAX_REPORT_TAX_BASIS_POINTS
-      ? rawTax
-      : DEFAULT_REPORT_TAX_BASIS_POINTS;
-    const example = calculateReportSettlement(10, taxBasisPoints);
-    const targetedRemaining = Math.max(0, quota.rules.targetedDailyLimit - (quota.byKind.targeted ?? 0));
-    const randomRemaining = Math.max(0, quota.rules.randomDailyLimit - (quota.byKind.random ?? 0));
-    const remaining = targetedRemaining + randomRemaining;
-    const unavailableReason = quota.controls.maintenance ? "系统正在维护，暂时无法发起举报"
-      : !quota.controls.modules.reporting ? "举报功能当前已由管理员关闭"
-      : (quota.policy.allFrozen || quota.policy.entertainmentFrozen) ? "你的娱乐权限已被冻结"
-      : quota.rules.targetedDailyLimit + quota.rules.randomDailyLimit <= 0 && quota.cardRemaining <= 0 ? "举报功能暂未开放"
-      : remaining <= 0 && quota.cardRemaining <= 0 ? "今天的举报次数已经用完，且没有可用举报卡次数"
-      : quota.permanentAvailable <= 0 ? "永久可用额度必须大于 0 才能举报"
-      : null;
-    return {
-      enabled: quota.controls.modules.reporting && (quota.rules.targetedDailyLimit + quota.rules.randomDailyLimit > 0 || quota.cardRemaining > 0),
-      canReport: unavailableReason === null,
-      unavailableReason,
-      permanentAvailable: quota.permanentAvailable,
-      dailyLimit: quota.rules.targetedDailyLimit + quota.rules.randomDailyLimit,
-      used: quota.used,
-      remaining,
-      businessDay: quota.day,
-      cardRemaining: quota.cardRemaining,
-      targeted: { dailyLimit: quota.rules.targetedDailyLimit, used: quota.byKind.targeted ?? 0, remaining: targetedRemaining, canReport: targetedRemaining > 0 || quota.cardRemaining > 0 },
-      random: { dailyLimit: quota.rules.randomDailyLimit, used: quota.byKind.random ?? 0, remaining: randomRemaining, canReport: randomRemaining > 0 || quota.cardRemaining > 0 },
-      tax: {
-        basisPoints: taxBasisPoints,
-        percent: formatReportTaxPercent(taxBasisPoints),
-        exampleGross: example.grossAmount,
-        exampleTax: example.taxAmount,
-        exampleCredited: example.creditedAmount,
-      },
-    };
-  }),
-
-  // ---- 举报记录（我举报的 + 举报我的） ----
-  myReports: memberQuery.query(async ({ ctx }) => {
-    const reporter = alias(users, "reporter");
-    const target = alias(users, "target");
-    const rows = await getDb()
-      .select({
-        id: reports.id,
-        kind: reports.kind,
-        success: reports.success,
-        amount: reports.amount,
-        reporterBalanceBefore: reports.reporterBalanceBefore,
-        targetBalanceBefore: reports.targetBalanceBefore,
-        lowerBalance: reports.lowerBalance,
-        grossAmount: reports.grossAmount,
-        taxBasisPoints: reports.taxBasisPoints,
-        tax: reports.tax,
-        creditedAmount: reports.creditedAmount,
-        deductedAmount: reports.deductedAmount,
-        createdAt: reports.createdAt,
-        reporterId: reports.reporterId,
-        targetId: reports.targetId,
-        reporterName: reporter.groupName,
-        reporterUsername: reporter.username,
-        targetName: target.groupName,
-        targetUsername: target.username,
-      })
-      .from(reports)
-      .leftJoin(reporter, eq(reports.reporterId, reporter.id))
-      .leftJoin(target, eq(reports.targetId, target.id))
-      .where(or(eq(reports.reporterId, ctx.user.id), eq(reports.targetId, ctx.user.id)))
-      .orderBy(desc(reports.createdAt))
-      .limit(100);
-    return rows.map((r) => ({
-      ...r,
-      direction: r.reporterId === ctx.user.id ? ("out" as const) : ("in" as const),
-      reporterDisplay: r.reporterName ?? r.reporterUsername ?? "未知",
-      targetDisplay: r.targetName ?? r.targetUsername ?? "未知",
-    }));
-  }),
-
-  myReportsPage: memberQuery.input(paginationInput.extend({
-    direction: z.enum(["all", "out", "in"]).default("all"),
-    success: z.boolean().optional(),
-  })).query(({ ctx, input }) => getDb().transaction((tx) => {
-    const reporter = alias(users, "reporter_page_member");
-    const target = alias(users, "target_page_member");
-    const visibility = input.direction === "out"
-      ? eq(reports.reporterId, ctx.user.id)
-      : input.direction === "in"
-        ? eq(reports.targetId, ctx.user.id)
-        : or(eq(reports.reporterId, ctx.user.id), eq(reports.targetId, ctx.user.id))!;
-    const where = input.success === undefined ? visibility : and(visibility, eq(reports.success, input.success));
-    const total = Number(tx.select({ n: sql<number>`COUNT(*)` }).from(reports).where(where).get()?.n ?? 0);
-    const { page, pageSize, offset } = resolvePagination(total, input.page, input.pageSize);
-    const rows = tx.select({
-      id: reports.id,
-      kind: reports.kind,
-      success: reports.success,
-      amount: reports.amount,
-      reporterBalanceBefore: reports.reporterBalanceBefore,
-      targetBalanceBefore: reports.targetBalanceBefore,
-      lowerBalance: reports.lowerBalance,
-      grossAmount: reports.grossAmount,
-      taxBasisPoints: reports.taxBasisPoints,
-      tax: reports.tax,
-      creditedAmount: reports.creditedAmount,
-      deductedAmount: reports.deductedAmount,
-      createdAt: reports.createdAt,
-      reporterId: reports.reporterId,
-      targetId: reports.targetId,
-      reporterName: reporter.groupName,
-      reporterUsername: reporter.username,
-      targetName: target.groupName,
-      targetUsername: target.username,
-    }).from(reports)
-      .leftJoin(reporter, eq(reports.reporterId, reporter.id))
-      .leftJoin(target, eq(reports.targetId, target.id))
-      .where(where).orderBy(desc(reports.createdAt), desc(reports.id))
-      .limit(pageSize).offset(offset).all();
-    const items = rows.map((row) => ({
-      ...row,
-      direction: row.reporterId === ctx.user.id ? "out" as const : "in" as const,
-      reporterDisplay: row.reporterName ?? row.reporterUsername ?? "未知",
-      targetDisplay: row.targetName ?? row.targetUsername ?? "未知",
-    }));
-    return paginatedResult(items, total, page, pageSize);
-  })),
-
   // ---- 额度流水（分页，可按类型筛选） ----
   myTransactions: memberQuery
     .input(
       z.object({
         page: z.number().int().min(1).default(1),
         pageSize: z.number().int().min(1).max(100).default(20),
-        kind: z.enum(["draw", "checkin", "video_reward", "report", "redeem", "credit_expire", "adjust", "usage", "duel", "team_battle"]).optional(),
+        kind: z.enum(["draw", "checkin", "video_reward", "redeem", "credit_expire", "adjust", "usage", "duel"]).optional(),
       }),
     )
     .query(async ({ ctx, input }) => {

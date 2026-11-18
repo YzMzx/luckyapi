@@ -23,7 +23,12 @@ describe("unified rankings and operational controls", () => {
 
     const catalog = await user.rankings.catalog();
     expect(catalog.categories.map((item) => item.key)).toEqual(["overall", "api", "finance", "entertainment"]);
-    expect(catalog.boards.length).toBeGreaterThanOrEqual(25);
+    const retiredBoards = ["report_wins", "report_income", "team_wins", "team_bet_net"];
+    for (const board of retiredBoards) {
+      expect(catalog.boards.some((item) => item.key === board)).toBe(false);
+      await expect(user.rankings.query({ category: "entertainment", board, period: "week", page: 1, pageSize: 20 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    }
+    expect(catalog.boards.some((item) => item.key === "duel_wins")).toBe(true);
     const spending = await user.rankings.query({ category: "api", board: "spend", period: "today", page: 1, pageSize: 20 });
     expect(spending.rows[0]).toMatchObject({ displayName: "榜单一号", metric: 1.5, rank: 1 });
     expect(spending.rows[0]).not.toHaveProperty("username");
@@ -38,10 +43,6 @@ describe("unified rankings and operational controls", () => {
       primaryClientId: "client-id",
       adminUsername: "admin",
     })).rejects.toThrow("只能填写协议和域名");
-    const reportSettings = await admin.admin.reportSettings.get();
-    await admin.admin.reportSettings.update({ taxPercent: 12.34 });
-    expect((await admin.admin.reportSettings.get()).taxPercent).toBe(12.34);
-    expect(reportSettings.taxPercent).toBeGreaterThanOrEqual(0);
     await admin.admin.control.update({ ...state, modules: { ...state.modules, transfer: false }, reason: "测试关闭转账" });
     await expect(user.finance.transfer({ accountId: other.linuxdoId, amount: 1, requestId: "ops-transfer-1" })).rejects.toThrow("转账功能当前已由管理员关闭");
     await admin.admin.control.update({ ...state, reason: "测试恢复转账" });

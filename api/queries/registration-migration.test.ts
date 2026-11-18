@@ -45,15 +45,6 @@ legacy.exec(`
     delta REAL NOT NULL,
     created_at INTEGER NOT NULL
   );
-  CREATE TABLE reports (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    reporter_id INTEGER NOT NULL,
-    target_id INTEGER NOT NULL,
-    success INTEGER NOT NULL DEFAULT 0,
-    amount REAL NOT NULL DEFAULT 0,
-    tax REAL NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL
-  );
   INSERT INTO users (linuxdo_id, username, display_name, group_name, created_at)
   VALUES ('pending-legacy', 'pending', 'Pending Legacy', NULL, 1),
          ('registered-legacy', 'registered', 'Registered Legacy', '正式用户', 2);
@@ -65,14 +56,12 @@ legacy.exec(`
          ('LEGACY-UNUSED', 'redeem', 5, NULL, NULL, 2);
   INSERT INTO checkins (user_id, day, delta, created_at)
   VALUES (2, '2026-01-01', 2.5, 4);
-  INSERT INTO reports (reporter_id, target_id, success, amount, tax, created_at)
-  VALUES (2, 2, 1, 9.5, 0.5, 5);
 `);
 legacy.close();
 
 describe("legacy registration migration", () => {
   it("moves OAuth-only users out of formal users and revokes their formal sessions", async () => {
-    const [{ getDb }, { pendingUsers, sessions, users, inviteCodes, codeRedemptions, checkins, reports }] = await Promise.all([
+    const [{ getDb }, { pendingUsers, sessions, users, inviteCodes, codeRedemptions, checkins }] = await Promise.all([
       import("./connection"),
       import("../../db/schema"),
     ]);
@@ -94,18 +83,6 @@ describe("legacy registration migration", () => {
       grossPayout: 0,
       configVersion: "legacy",
       delta: 2.5,
-    });
-    expect((await db.select().from(reports))[0]).toMatchObject({
-      requestId: null,
-      amount: 9.5,
-      grossAmount: 10,
-      taxBasisPoints: 500,
-      tax: 0.5,
-      creditedAmount: 9.5,
-      deductedAmount: 10,
-      reporterBalanceBefore: null,
-      targetBalanceBefore: null,
-      lowerBalance: null,
     });
   });
 });

@@ -11,7 +11,7 @@ describe("server-side pagination", () => {
       import("../../db/schema"),
       import("../router"),
     ]);
-    const { users, sessions, adminSessions, usageLogs, reports, announcements, adminLogs } = schema;
+    const { users, sessions, adminSessions, usageLogs, announcements, adminLogs } = schema;
     const db = getDb();
     const created = await db.insert(users).values(Array.from({ length: 5 }, (_, index) => ({
       linuxdoId: `page-${index + 1}`,
@@ -29,10 +29,6 @@ describe("server-side pagination", () => {
       { userId: created[0].id, model: "alpha", cost: 0.0123 },
       { userId: created[0].id, model: "beta", cost: 0.0345 },
       { userId: created[1].id, model: "private-other", cost: 0.2 },
-    ]);
-    await db.insert(reports).values([
-      { reporterId: created[0].id, targetId: created[1].id, success: true },
-      { reporterId: created[1].id, targetId: created[2].id, success: false },
     ]);
     await db.insert(announcements).values([
       { title: "公开", content: "可见", status: "published", publishedAt: new Date(Date.now() - 1_000) },
@@ -88,9 +84,6 @@ describe("server-side pagination", () => {
       totalPages: 2,
       logs: [{ model: "alpha" }],
     });
-    const reportPage = await mine.member.myReportsPage({ page: 1, pageSize: 20, direction: "all" });
-    expect(reportPage.total).toBe(1);
-    expect(reportPage.items[0]).toMatchObject({ reporterId: created[0].id, targetId: created[1].id });
     await expect(mine.entertainment.announcementsPage({ page: 1, pageSize: 20 })).resolves.toMatchObject({
       total: 1,
       items: [{ title: "公开" }],

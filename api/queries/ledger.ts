@@ -5,7 +5,7 @@ import { users, transactions } from "@db/schema";
 
 type LedgerDb = Pick<BetterSQLite3Database<typeof schema>, "select" | "insert">;
 
-export type TxKind = "draw" | "checkin" | "video_reward" | "report" | "redeem" | "credit_expire" | "adjust" | "usage" | "duel" | "team_battle" | "permanent_debit" | "transfer_out" | "transfer_in" | "loan_disbursement" | "loan_due" | "loan_repayment" | "loan_offer_refund";
+export type TxKind = "draw" | "checkin" | "video_reward" | "redeem" | "credit_expire" | "adjust" | "usage" | "duel" | "permanent_debit" | "transfer_out" | "transfer_in" | "loan_disbursement" | "loan_due" | "loan_repayment" | "loan_offer_refund";
 
 /**
  * 记账：读取变动后的余额并写入流水。
