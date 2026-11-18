@@ -1,0 +1,33 @@
+@media (prefers-reduced-motion: no-preference) {
+  .stage-plate-limited {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .stage-plate-limited::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      110deg,
+      transparent 32%,
+      currentColor 50%,
+      transparent 68%
+    );
+    opacity: 0.24;
+    transform: translateX(100%);
+    animation: stage-plate-sheen 2.2s ease-in-out 2;
+  }
+
+  @keyframes stage-plate-sheen {
+    0%,
+    15% {
+      transform: translateX(-100%);
+    }
+    85%,
+    100% {
+      transform: translateX(100%);
+    }
+  }
+}

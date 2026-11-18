@@ -73,9 +73,13 @@ export default function BadgeHall() {
                       key={rank}
                       className="min-w-0 rounded-lg border border-border bg-[#162638] p-3"
                     >
-                      <span className="font-num text-xs text-[#d7b580]">
-                        No.{rank}
-                      </span>
+                      {seat ? (
+                        <StagePlate {...stage} rank={seat.rank} />
+                      ) : (
+                        <span className="font-num text-xs text-[#d7b580]">
+                          No.{rank}
+                        </span>
+                      )}
                       {seat ? (
                         <>
                           <p className="mt-1 break-all font-bold">

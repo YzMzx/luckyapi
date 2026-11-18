@@ -1,5 +1,7 @@
 import { Crown, Orbit, Sparkles, Star, Sun } from "lucide-react";
 
+import "./StagePlate.css";
+
 const designs = {
   10: {
     icon: Sparkles,
@@ -37,7 +39,7 @@ export function StagePlate({
     designs[level as keyof typeof designs] ?? designs[10];
   return (
     <span
-      className={`inline-flex items-center gap-3 rounded-lg border bg-gradient-to-r px-4 py-2 ${style}`}
+      className={`inline-flex items-center gap-3 rounded-lg border bg-gradient-to-r px-4 py-2 ${style} ${rank != null ? "stage-plate-limited" : ""}`}
     >
       <Icon aria-hidden="true" size={24} strokeWidth={1.5} />
       <span className="font-bold tracking-widest">{name}</span>

@@ -47,7 +47,12 @@ export default function AdminLevels() {
                         className="min-w-0 rounded border border-border p-2 text-sm"
                         key={rank}
                       >
-                        <strong>No.{rank}</strong> ·{" "}
+                        {seat ? (
+                          <StagePlate {...stage} rank={seat.rank} />
+                        ) : (
+                          <strong>No.{rank}</strong>
+                        )}{" "}
+                        ·{" "}
                         <span className="break-all">
                           {seat?.userName ?? "虚位以待"}
                         </span>
