@@ -3,7 +3,6 @@ import { toast } from "sonner";
 import { LEVEL_STAGES, getLevelThreshold } from "@contracts/levels";
 import { trpc } from "@/providers/trpc";
 import { StagePlate } from "./StagePlate";
-import { PlateMotionControl, PlateMotionRegion } from "./StagePlateMotion";
 
 export function MemberLevel() {
   const profile = trpc.levels.profile.useQuery();
@@ -88,14 +87,13 @@ export function MemberLevel() {
           )}
           <div className="mt-5 flex items-center justify-between gap-3 border-t border-border pt-4">
             <h3 className="text-sm font-bold">我的限定铭牌</h3>
-            {data.badges.length > 0 && <PlateMotionControl />}
           </div>
           {data.badges.length === 0 ? (
             <p className="mt-2 text-sm text-muted-foreground">
               暂无铭牌。每个阶段的前三位达成者可获得限定铭牌。
             </p>
           ) : (
-            <PlateMotionRegion>
+            <div>
               <ul className="mt-3 grid gap-4">
                 {data.badges.map(badge => {
                   const stage = LEVEL_STAGES.find(
@@ -125,7 +123,7 @@ export function MemberLevel() {
                   );
                 })}
               </ul>
-            </PlateMotionRegion>
+            </div>
           )}
         </>
       )}

@@ -1,10 +1,6 @@
 import { Link } from "react-router";
 import { LEVEL_STAGES, MAX_LEVEL, getLevelThreshold } from "@contracts/levels";
 import { StagePlate } from "@/components/StagePlate";
-import {
-  PlateMotionControl,
-  PlateMotionRegion,
-} from "@/components/StagePlateMotion";
 import { trpc } from "@/providers/trpc";
 
 export default function AdminLevels() {
@@ -15,7 +11,6 @@ export default function AdminLevels() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-bold">限定铭牌席位</h2>
           <div className="flex items-center gap-2">
-            <PlateMotionControl />
             <Link
               to="/admin/users"
               className="admin-secondary px-3 py-2 text-sm"
@@ -32,7 +27,7 @@ export default function AdminLevels() {
             </button>
           </p>
         ) : hall.data ? (
-          <PlateMotionRegion className="mt-4 space-y-3">
+          <div className="mt-4 space-y-3">
             {LEVEL_STAGES.map(stage => (
               <section
                 key={stage.level}
@@ -75,7 +70,7 @@ export default function AdminLevels() {
                 </ol>
               </section>
             ))}
-          </PlateMotionRegion>
+          </div>
         ) : (
           <p role="status" className="mt-4">
             正在加载铭牌记录…

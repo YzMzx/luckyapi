@@ -278,17 +278,14 @@
   inset: 8%;
   z-index: -1;
   border-radius: 40%;
-  background: var(--plate-glow);
+  background: radial-gradient(ellipse, var(--plate-glow), transparent 70%);
   opacity: 0.35;
-  filter: blur(12px);
 }
 .stage-plate-4 .stage-plate-outer-glow {
   opacity: 0.55;
-  filter: blur(16px);
 }
 .stage-plate-5 .stage-plate-outer-glow {
   opacity: 0.75;
-  filter: blur(18px);
 }
 .stage-plate-serial {
   position: relative;
@@ -381,7 +378,6 @@
 }
 .fx-comet-core {
   fill: var(--plate-highlight);
-  filter: drop-shadow(0 0 5px var(--plate-accent));
 }
 /* 2 · Two continuous energy rivers and opposed orbiting satellites. */
 .stage-plate-2 .stage-plate-light-field {
@@ -401,10 +397,10 @@
   stroke-dasharray: 5 5;
 }
 .fx-energy-river {
+  --flow-period: -28;
   stroke: #90dcff;
   stroke-width: 3;
   stroke-dasharray: 18 10;
-  filter: drop-shadow(0 0 3px #4aaeff);
 }
 .fx-energy-river-secondary {
   stroke: #b6b2ff;
@@ -423,11 +419,9 @@
   fill: none;
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
-  filter: drop-shadow(0 0 3px #4fffc7);
 }
 .fx-map-node {
   stroke-width: 1;
-  filter: drop-shadow(0 0 3px #4fffc7);
 }
 .stage-plate-map-line {
   stroke-dasharray: 1;
@@ -457,9 +451,9 @@
 }
 .fx-diamond-rain {
   fill: #efd8ff;
-  filter: drop-shadow(0 0 4px #c38aff);
 }
 .fx-royal-ribbon {
+  --flow-period: -21;
   fill: none;
   stroke: #d9a4ff;
   stroke-width: 2.5;
@@ -476,32 +470,59 @@
   filter: drop-shadow(0 0 5px var(--plate-accent));
   pointer-events: none;
 }
-.stage-plate-crown i {
-  position: absolute;
-  inset-block-end: 0;
-  inline-size: 0;
-  block-size: 0;
-  border-inline: 0.42rem solid transparent;
-  border-block-end: 0.85rem solid currentColor;
-  transform-origin: bottom;
+.stage-plate-crown svg {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  overflow: visible;
 }
-.stage-plate-crown i:nth-child(1) {
-  inset-inline-start: 0;
-  transform: rotate(-18deg);
+.fx-regal-crown-body {
+  fill: rgb(159 97 225 / 0.45);
+  stroke: currentColor;
+  stroke-width: 1.5;
 }
-.stage-plate-crown i:nth-child(2) {
-  inset-inline-start: 0.9rem;
-  border-block-end-width: 1.2rem;
+.fx-regal-crown-base {
+  stroke: var(--plate-highlight);
+  stroke-width: 2;
 }
-.stage-plate-crown i:nth-child(3) {
-  inset-inline-end: 0;
-  transform: rotate(18deg);
+.fx-regal-crown-jewel {
+  fill: var(--plate-highlight);
+  stroke: currentColor;
+  stroke-width: 1;
+  transform-box: fill-box;
+  transform-origin: center;
 }
-.stage-plate-crown b {
-  position: absolute;
-  inset-inline-start: 1rem;
-  inset-block-start: 0.55rem;
-  font-size: 0.5rem;
+.stage-plate-crown circle {
+  fill: var(--plate-highlight);
+}
+.stage-plate-crown-4 {
+  inline-size: 3.2rem;
+  block-size: 1.8rem;
+  inset-inline-start: 0.85rem;
+}
+.stage-plate-crown-5 {
+  inline-size: 3.6rem;
+  block-size: 2rem;
+  inset-inline-start: 0.7rem;
+  color: #ffe6a0;
+}
+.fx-crystal-sigil {
+  fill: rgb(182 113 255 / 0.16);
+  stroke: #edceff;
+  stroke-width: 1.5;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.fx-crown-portals {
+  fill: none;
+  stroke: #c68bff;
+  stroke-width: 1.2;
+  stroke-dasharray: 6 5;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.fx-crown-lances {
+  fill: #f4dcff;
 }
 .stage-plate-levitating-gems i {
   position: absolute;
@@ -562,21 +583,12 @@
   );
   opacity: 0.48;
 }
-.stage-plate-grand-aura {
-  position: absolute;
-  inset: -8px;
-  z-index: -2;
-  background: conic-gradient(
-    from 0deg,
-    #ffc04d,
-    #fff1ae,
-    #a56bea,
-    #6ac9ff,
-    #ffc04d
-  );
-  opacity: 0.5;
-  filter: blur(16px);
-  clip-path: var(--plate-shape);
+.stage-plate-5 .stage-plate-light-field {
+  inset: -75%;
+  opacity: 0.62;
+}
+.stage-plate-5 .stage-plate-light-band {
+  opacity: 0.4;
 }
 .stage-plate-celestial-rings {
   position: absolute;
@@ -601,18 +613,16 @@
   opacity: 0.5;
   transform-box: fill-box;
   transform-origin: center;
-  filter: drop-shadow(0 0 5px #ffcf5d);
 }
 .fx-solar-waves {
+  --flow-period: -40;
   fill: none;
   stroke: #ffe29b;
   stroke-width: 3;
   stroke-dasharray: 28 12;
-  filter: drop-shadow(0 0 4px #ffba38);
 }
 .fx-star-lances {
   fill: #fff8d5;
-  filter: drop-shadow(0 0 4px #ffd466);
 }
 .stage-plate-satellites {
   position: absolute;
@@ -679,236 +689,230 @@
     0 0 5px var(--plate-accent),
     0 0 12px var(--plate-accent);
 }
-.plate-motion-control {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  min-block-size: 2rem;
-  min-inline-size: 2rem;
-  padding: 0.35rem 0.65rem;
-  border: 1px solid hsl(var(--border));
-  border-radius: 0.4rem;
-  color: hsl(var(--muted-foreground));
-  background: hsl(var(--card) / 0.65);
-  font-size: 0.7rem;
-  transition:
-    color 150ms,
-    border-color 150ms;
-}
-.plate-motion-control:hover {
-  color: #fce1b6;
-  border-color: #af915f;
-}
-.plate-motion-control:focus-visible {
-  outline: 2px solid #ffb700;
-  outline-offset: 3px;
-}
-/* The pause control governs decorative motion in the whole badge view. */
-:root[data-plate-motion="off"]
-  :is(.rise-in, .jackpot-gradient, .animate-marquee),
-:root[data-plate-motion="off"] .light-sweep::after {
-  animation: none;
-}
-.plate-motion-control svg {
-  inline-size: 0.8rem;
-  block-size: 0.8rem;
-}
 @media (prefers-reduced-motion: no-preference) {
-  [data-plate-motion="on"] .stage-plate-light-field {
+  .stage-plate-light-field,
+  .stage-plate-light-band,
+  .stage-plate-outer-glow,
+  .stage-plate-satellites,
+  .stage-plate-crown,
+  .stage-plate-celestial-rings i {
+    will-change: transform, opacity;
+  }
+  .stage-plate-light-field {
     animation: plate-field-turn 16s linear infinite;
   }
-  [data-plate-motion="on"] .stage-plate-light-band {
-    animation: plate-light-sweep 4.8s ease-in-out infinite;
+  .stage-plate-light-band {
+    animation: plate-light-sweep 4.8s linear infinite;
   }
-  [data-plate-motion="on"] .stage-plate-outer-glow {
-    animation: plate-glow-breathe 3.8s ease-in-out infinite alternate;
+  .stage-plate-outer-glow {
+    animation: plate-glow-breathe 3.8s ease-in-out infinite;
   }
-  [data-plate-motion="on"] .stage-plate-edge-runner i {
+  .stage-plate-edge-runner i {
     animation: plate-edge-run 4s ease-in-out infinite;
   }
-  [data-plate-motion="on"] .stage-plate-1 .fx-comets {
+  .stage-plate-1 .fx-comets {
     animation: plate-comet-flight 3.6s ease-in-out infinite;
   }
-  [data-plate-motion="on"] .stage-plate-1 .fx-comet-core {
-    animation: plate-comet-pulse 1.8s ease-in-out infinite alternate;
+  .stage-plate-1 .fx-comet-core {
+    animation: plate-comet-pulse 1.8s ease-in-out infinite;
   }
-  [data-plate-motion="on"] .stage-plate-2 .stage-plate-satellites {
+  .stage-plate-2 .stage-plate-satellites {
     animation: plate-orbit-spin 5s linear infinite;
   }
-  [data-plate-motion="on"] .stage-plate-2 .stage-plate-emblem-orbit {
+  .stage-plate-2 .stage-plate-emblem-orbit {
     animation: plate-emblem-spin 6s linear infinite reverse;
   }
-  [data-plate-motion="on"] .fx-energy-river {
+  .fx-energy-river {
     animation: plate-river-flow 2.8s linear infinite;
   }
-  [data-plate-motion="on"] .fx-energy-river-secondary {
+  .fx-energy-river-secondary {
     animation-direction: reverse;
   }
-  [data-plate-motion="on"] .fx-constellation > path,
-  [data-plate-motion="on"] .stage-plate-map-line {
+  .fx-constellation > path,
+  .stage-plate-map-line {
     animation: plate-constellation-draw 5s ease-in-out infinite;
   }
-  [data-plate-motion="on"] .fx-map-node,
-  [data-plate-motion="on"] .stage-plate-map-star {
+  .fx-map-node,
+  .stage-plate-map-star {
     animation: plate-map-node-light 5s ease-in-out infinite;
     animation-delay: calc(var(--node-index, var(--star-index)) * 0.3s);
   }
-  [data-plate-motion="on"] .stage-plate-3 .stage-plate-satellites {
+  .stage-plate-3 .stage-plate-satellites {
     animation: plate-orbit-spin 13s linear infinite;
   }
-  [data-plate-motion="on"] .stage-plate-crown {
-    animation: plate-crown-float 3s ease-in-out infinite alternate;
+  .stage-plate-crown {
+    animation: plate-crown-float 3s ease-in-out infinite;
   }
-  [data-plate-motion="on"] .fx-crown-rays {
-    animation: plate-crown-rays 9s linear infinite;
+  .fx-crown-rays {
+    animation: plate-orbit-spin 9s linear infinite;
   }
-  [data-plate-motion="on"] .fx-diamond-rain {
-    animation: plate-diamond-drift 3.5s ease-in-out infinite alternate;
-  }
-  [data-plate-motion="on"] .fx-royal-ribbon {
+  .fx-royal-ribbon {
     animation: plate-river-flow 3.5s linear infinite;
   }
-  [data-plate-motion="on"] .stage-plate-4 .stage-plate-satellites {
+  .stage-plate-4 .stage-plate-satellites {
     animation: plate-orbit-spin 9s linear infinite reverse;
   }
-  [data-plate-motion="on"] .stage-plate-levitating-gems i {
-    animation: plate-gem-float 2.8s ease-in-out infinite alternate;
+  .stage-plate-levitating-gems i {
+    animation: plate-gem-float 2.8s ease-in-out infinite;
   }
-  [data-plate-motion="on"] .stage-plate-levitating-gems i:nth-child(2) {
+  .stage-plate-levitating-gems i:nth-child(2) {
     animation-delay: -1s;
   }
-  [data-plate-motion="on"] .stage-plate-levitating-gems i:nth-child(3) {
+  .stage-plate-levitating-gems i:nth-child(3) {
     animation-delay: -2s;
   }
-  [data-plate-motion="on"] .stage-plate-grand-aura {
-    animation: plate-grand-aura 10s linear infinite;
+  .stage-plate-celestial-rings i {
+    animation: plate-sovereign-ring 4s ease-in-out infinite;
   }
-  [data-plate-motion="on"] .stage-plate-celestial-rings i:first-child {
-    animation: plate-sovereign-ring 4s ease-in-out infinite alternate;
+  .stage-plate-celestial-rings i:nth-child(2) {
+    animation-delay: -2s;
   }
-  [data-plate-motion="on"] .stage-plate-celestial-rings i:nth-child(2) {
-    animation: plate-sovereign-ring 5s ease-in-out infinite alternate-reverse;
+  .fx-crystal-sigil {
+    animation: plate-crystal-focus 4.8s ease-in-out infinite;
   }
-  [data-plate-motion="on"] .fx-prism-burst {
-    animation: plate-crown-rays 12s linear infinite reverse;
+  .fx-crown-portals {
+    animation: plate-portal-turn 14s linear infinite;
   }
-  [data-plate-motion="on"] .fx-solar-waves {
+  .fx-crown-lances {
+    animation: plate-lances-breathe 3.4s ease-in-out infinite;
+  }
+  .fx-regal-crown-jewel {
+    animation: plate-jewel-breathe 2.8s ease-in-out infinite;
+  }
+  .fx-solar-corona {
+    animation: plate-corona-turn 18s linear infinite;
+  }
+  .fx-solar-heart {
+    animation: plate-solar-heart 4s ease-in-out infinite;
+  }
+  .fx-gold-filigree {
+    animation: plate-filigree-flow 5s ease-in-out infinite;
+  }
+  .fx-solar-waves {
     animation: plate-river-flow 2.5s linear infinite;
   }
-  [data-plate-motion="on"] .fx-star-lances {
-    animation: plate-star-lances 3s ease-in-out infinite alternate;
+  .fx-star-lances {
+    animation: plate-star-lances 3s ease-in-out infinite;
   }
-  [data-plate-motion="on"] .stage-plate-5 .stage-plate-satellites {
+  .stage-plate-5 .stage-plate-satellites {
     animation: plate-orbit-spin 7s linear infinite;
   }
-  [data-plate-motion="on"] .stage-plate-5 .stage-plate-emblem-orbit {
+  .stage-plate-5 .stage-plate-emblem-orbit {
     animation: plate-emblem-spin 5s linear infinite reverse;
   }
-  [data-plate-motion="on"] .stage-plate-5 .stage-plate-crown {
+  .stage-plate-5 .stage-plate-crown {
     animation-duration: 2s;
   }
 }
 @keyframes plate-field-turn {
+  from {
+    transform: rotate(0deg);
+  }
   to {
-    transform: rotate(360deg);
+    transform: rotate(1turn);
   }
 }
 @keyframes plate-light-sweep {
-  0%,
-  15% {
+  from {
     transform: translate3d(-200%, 0, 0) skewX(-20deg);
   }
-  70%,
-  100% {
+  to {
     transform: translate3d(550%, 0, 0) skewX(-20deg);
   }
 }
 @keyframes plate-glow-breathe {
-  from {
+  0%,
+  100% {
     transform: scale(0.95);
     opacity: 0.25;
   }
-  to {
+  50% {
     transform: scale(1.12);
     opacity: 0.7;
   }
 }
 @keyframes plate-edge-run {
   0%,
-  10% {
+  100% {
     transform: translateX(0);
     opacity: 0;
   }
-  25% {
-    opacity: 1;
-  }
+  15%,
   75% {
     opacity: 1;
   }
-  90%,
-  100% {
+  90% {
     transform: translateX(330%);
     opacity: 0;
   }
 }
 @keyframes plate-comet-flight {
   0%,
-  15% {
+  100% {
     transform: translate3d(-70px, 45px, 0) rotate(-8deg);
     opacity: 0;
   }
-  30% {
-    opacity: 1;
-  }
+  20%,
   70% {
     opacity: 1;
   }
-  90%,
-  100% {
+  90% {
     transform: translate3d(100px, -30px, 0) rotate(-8deg);
     opacity: 0;
   }
 }
 @keyframes plate-comet-pulse {
-  from {
+  0%,
+  100% {
     transform: scale(0.85);
     opacity: 0.65;
   }
-  to {
+  50% {
     transform: scale(1.3);
     opacity: 1;
   }
 }
 @keyframes plate-orbit-spin {
+  from {
+    transform: rotate(0deg);
+  }
   to {
-    transform: rotate(360deg);
+    transform: rotate(1turn);
   }
 }
 @keyframes plate-emblem-spin {
+  from {
+    transform: rotate(-32deg);
+  }
   to {
     transform: rotate(328deg);
   }
 }
 @keyframes plate-river-flow {
+  from {
+    stroke-dashoffset: 0;
+  }
   to {
-    stroke-dashoffset: -112;
+    stroke-dashoffset: var(--flow-period, -112);
   }
 }
 @keyframes plate-constellation-draw {
   0%,
-  10% {
+  100% {
     stroke-dashoffset: 1;
-    opacity: 0.15;
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
   }
   45%,
-  75% {
+  65% {
     stroke-dashoffset: 0;
     opacity: 1;
   }
-  100% {
+  90% {
     stroke-dashoffset: -1;
-    opacity: 0.2;
+    opacity: 0;
   }
 }
 @keyframes plate-map-node-light {
@@ -925,69 +929,162 @@
   }
 }
 @keyframes plate-crown-float {
-  from {
+  0%,
+  100% {
     transform: translateY(2px);
   }
-  to {
+  50% {
     transform: translateY(-4px);
   }
 }
-@keyframes plate-crown-rays {
-  to {
-    transform: rotate(360deg);
-  }
-}
 @keyframes plate-diamond-drift {
-  from {
+  0%,
+  100% {
     transform: translateY(-5px);
     opacity: 0.35;
   }
-  to {
+  50% {
     transform: translateY(7px);
     opacity: 1;
   }
 }
 @keyframes plate-gem-float {
-  from {
+  0%,
+  100% {
     transform: translateY(-4px) rotate(-8deg);
     opacity: 0.5;
   }
-  to {
+  50% {
     transform: translateY(5px) rotate(12deg);
     opacity: 1;
   }
 }
-@keyframes plate-grand-aura {
-  0% {
-    transform: rotate(0) scale(0.98);
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 0.8;
-  }
-  100% {
-    transform: rotate(360deg) scale(0.98);
-    opacity: 0.4;
-  }
-}
 @keyframes plate-sovereign-ring {
-  from {
+  0%,
+  100% {
     transform: scale(0.98);
     opacity: 0.35;
   }
-  to {
+  50% {
     transform: scale(1.035);
     opacity: 1;
   }
 }
 @keyframes plate-star-lances {
-  from {
+  0%,
+  100% {
     transform: translateY(3px) scale(0.9);
     opacity: 0.45;
   }
-  to {
+  50% {
     transform: translateY(-3px) scale(1.12);
     opacity: 1;
+  }
+}
+/* Regal tiers: all cycles are symmetric or full turns, with no layout-affecting motion. */
+.fx-solar-corona {
+  fill: none;
+  stroke: #ffe7a0;
+  stroke-width: 1.7;
+  stroke-dasharray: 8 5;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.fx-solar-corona circle:nth-child(2) {
+  stroke: #c5a5ff;
+  stroke-width: 1;
+  stroke-dasharray: 3 7;
+}
+.fx-solar-corona path {
+  stroke: #fff1bd;
+  stroke-width: 2.4;
+  stroke-dasharray: none;
+}
+.fx-solar-heart {
+  fill: rgb(255 202 81 / 0.28);
+  stroke: #fff2bb;
+  stroke-width: 1.6;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.fx-gold-filigree {
+  fill: none;
+  stroke: #ffd476;
+  stroke-width: 1.4;
+  stroke-dasharray: 20 6;
+}
+@keyframes plate-crystal-focus {
+  0%,
+  100% {
+    transform: translateY(2px) scale(0.82) rotate(-5deg);
+    opacity: 0.35;
+  }
+  45%,
+  60% {
+    transform: translateY(-3px) scale(1.08) rotate(5deg);
+    opacity: 1;
+  }
+}
+@keyframes plate-portal-turn {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(1turn);
+  }
+}
+@keyframes plate-lances-breathe {
+  0%,
+  100% {
+    transform: translateY(3px);
+    opacity: 0.25;
+  }
+  50% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+@keyframes plate-jewel-breathe {
+  0%,
+  100% {
+    transform: scale(0.75);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+@keyframes plate-corona-turn {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(1turn);
+  }
+}
+@keyframes plate-solar-heart {
+  0%,
+  100% {
+    transform: scale(0.82) rotate(0deg);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.12) rotate(0.5turn);
+    opacity: 1;
+  }
+}
+@keyframes plate-filigree-flow {
+  0%,
+  100% {
+    transform: translateX(-3px);
+    opacity: 0.25;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    transform: translateX(3px);
+    opacity: 0.85;
+    stroke-dashoffset: -26;
   }
 }
 @media (max-width: 639px) {
@@ -1011,7 +1108,6 @@
   .stage-plate-backdrop,
   .stage-plate-effects,
   .stage-plate-outer-glow,
-  .stage-plate-grand-aura,
   .stage-plate-crown,
   .stage-plate-celestial-rings {
     display: none;

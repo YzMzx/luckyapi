@@ -183,12 +183,26 @@ function LimitedEffects({ stage }: { stage: number }) {
                 d="m49 0-8 30-22-17 8 27-27 6 30 11-18 24 29-14 8 37 9-37 28 14-17-24 29-11-27-6 8-27-22 17Z"
               />
               <path
-                className="fx-diamond-rain"
-                d="m118 19 4 8-4 8-4-8Zm61 47 5 10-5 10-5-10Zm91-45 4 8-4 8-4-8Zm37 46 3 6-3 6-3-6Z"
-              />
-              <path
                 className="fx-royal-ribbon"
                 d="M79 86C143 20 196 95 353 12"
+              />
+              <g className="fx-crystal-sigil">
+                <path d="m49 24 13 21-5 25-8 10-8-10-5-25Z" />
+                <path d="m49 24v56M36 45l13 12 13-12M41 70l8-13 8 13" />
+              </g>
+              <g className="fx-crown-portals">
+                <ellipse cx="49" cy="52" rx="34" ry="39" />
+                <ellipse
+                  cx="49"
+                  cy="52"
+                  rx="42"
+                  ry="25"
+                  transform="rotate(-30 49 52)"
+                />
+              </g>
+              <path
+                className="fx-crown-lances"
+                d="m123 18 4 9 9 4-9 4-4 9-4-9-9-4 9-4Zm121 43 5 11 11 5-11 5-5 11-5-11-11-5 11-5Zm51-42 3 6 6 3-6 3-3 6-3-6-6-3 6-3Z"
               />
             </g>
           )}
@@ -198,13 +212,22 @@ function LimitedEffects({ stage }: { stage: number }) {
                 className="fx-solar-waves"
                 d="M-20 68C38 10 61 97 116 40s88 55 132 0 72-28 112-2M-20 86C38 28 61 115 116 58s88 55 132 0 72-28 112-2"
               />
-              <path
-                className="fx-prism-burst"
-                d="m49 0 6 37 27-27-16 36 40-10-36 23 38 17-41-7 17 35-28-27-7 27-5-37-28 27 17-35-41 7 38-17-36-23 40 10-16-36 27 27Z"
-              />
+              <g className="fx-solar-corona">
+                <circle cx="49" cy="52" r="33" />
+                <circle cx="49" cy="52" r="41" />
+                <path d="M49 0v17m0 70v17M-3 52h17m70 0h17M12 15l12 12m50 50 12 12M12 89l12-12m50-50 12-12M26 4l7 15m32 66 7 15M2 29l15 7m64 32 15 7M2 75l15-7m64-32 15-7M26 100l7-15m32-66 7-15" />
+              </g>
+              <g className="fx-solar-heart">
+                <circle cx="49" cy="52" r="17" />
+                <path d="m49 30 5 17 17 5-17 5-5 17-5-17-17-5 17-5Z" />
+              </g>
               <path
                 className="fx-star-lances"
                 d="m132 12 3 6 6 3-6 3-3 6-3-6-6-3 6-3Zm107 54 4 8 8 4-8 4-4 8-4-8-8-4 8-4Zm67-51 2 5 5 2-5 2-2 5-2-5-5-2 5-2Z"
+              />
+              <path
+                className="fx-gold-filigree"
+                d="M85 21h38l9 9h45l9-9h47M85 83h38l9-9h45l9 9h47M272 21h18l8 8h42M272 83h18l8-8h42"
               />
             </g>
           )}
@@ -225,10 +248,16 @@ function LimitedEffects({ stage }: { stage: number }) {
           className={`stage-plate-crown stage-plate-crown-${stage}`}
           aria-hidden="true"
         >
-          <i />
-          <i />
-          <i />
-          <b>◆</b>
+          <svg viewBox="0 0 64 36" fill="none">
+            <path
+              className="fx-regal-crown-body"
+              d="m5 10 15 10 12-17 12 17 15-10-7 23H12Z"
+            />
+            <path className="fx-regal-crown-base" d="M12 27h40" />
+            <path className="fx-regal-crown-jewel" d="m32 15 5 6-5 6-5-6Z" />
+            <circle cx="5" cy="8" r="2" />
+            <circle cx="59" cy="8" r="2" />
+          </svg>
         </span>
       )}
       {stage === 5 && (
@@ -263,9 +292,6 @@ export function StagePlate({
       data-level={level}
       data-effect={getStageMeta(level).motion}
     >
-      {limited && stage === 5 && (
-        <span className="stage-plate-grand-aura" aria-hidden="true" />
-      )}
       <span className="stage-plate-shell">
         <span className="stage-plate-backdrop" aria-hidden="true" />
         {limited && <LimitedEffects stage={stage} />}
