@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-v1.0.7-8b5e16" />
+  <img alt="version" src="https://img.shields.io/badge/version-v1.0.8-8b5e16" />
   <img alt="deployment" src="https://img.shields.io/badge/deployment-Docker-2496ED?logo=docker&logoColor=white" />
   <img alt="platform" src="https://img.shields.io/badge/platform-Self--hosted-0f766e" />
   <img alt="stack" src="https://img.shields.io/badge/stack-React%20%2B%20TypeScript-3178C6" />

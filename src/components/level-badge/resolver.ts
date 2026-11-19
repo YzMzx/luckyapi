@@ -1,61 +1,111 @@
-import { getBadgeTheme, getStageMinLevel } from "./themes/registry";
 import type {
   BadgeRank,
   BadgeStageConfig,
-  BadgeThemeConfig,
-  ResolveBadgeInput,
+  ResolveBadgeOptions,
   ResolvedBadgeSpec,
-} from "./types";
+} from './types';
+import { DEFAULT_THEME_ID, getBadgeTheme } from './themes/registry';
 
-export function normalizeBadgeRank(value: unknown): BadgeRank | null {
-  return value === 1 || value === 2 || value === 3 ? value : null;
-}
-
-function normalizeLevel(level: number): number {
-  return Number.isFinite(level) ? Math.max(1, Math.floor(level)) : 1;
-}
-
-function stageForLevel(
-  level: number,
-  theme: BadgeThemeConfig
-): BadgeStageConfig {
-  const { stages } = theme;
-  for (let i = stages.length - 1; i > 0; i--) {
-    if (level >= getStageMinLevel(stages[i], i)) return stages[i];
+export function normalizeLevel(level: number): number {
+  if (!Number.isFinite(level) || level < 1) {
+    return 1;
   }
-  return stages[0];
+  return Math.floor(level);
+}
+
+export function normalizeRank(rank?: number | null): BadgeRank | null {
+  if (rank === 1 || rank === 2 || rank === 3) {
+    return rank;
+  }
+  return null;
 }
 
 export function resolveStageByLevel(
   level: number,
-  themeId?: string
+  themeId: string = DEFAULT_THEME_ID
 ): BadgeStageConfig {
-  return stageForLevel(normalizeLevel(level), getBadgeTheme(themeId));
+  const theme = getBadgeTheme(themeId);
+  const safeLevel = normalizeLevel(level);
+
+  for (const stage of theme.stages) {
+    const withinMin = safeLevel >= stage.minLevel;
+    const withinMax = stage.maxLevel === null || safeLevel <= stage.maxLevel;
+    if (withinMin && withinMax) {
+      return stage;
+    }
+  }
+
+  return safeLevel < theme.stages[0].minLevel
+    ? theme.stages[0]
+    : theme.stages[theme.stages.length - 1];
 }
 
-export function resolveBadgeSpec({
-  level,
-  rank,
-  themeId,
-  customTitle,
-}: ResolveBadgeInput): ResolvedBadgeSpec {
-  const theme = getBadgeTheme(themeId);
-  const normalizedLevel = normalizeLevel(level);
-  const stage = stageForLevel(normalizedLevel, theme);
-  const place = normalizeBadgeRank(rank);
-  const variant = place === null ? stage.base : stage.ranks[place];
+export function resolveBadgeSpec(options: ResolveBadgeOptions): ResolvedBadgeSpec {
+  const theme = getBadgeTheme(options.themeId ?? DEFAULT_THEME_ID);
+  const safeLevel = normalizeLevel(options.level);
+  const safeRank = normalizeRank(options.rank);
+  const stage = resolveStageByLevel(safeLevel, theme.id);
+
+  const rankKey = safeRank ? (String(safeRank) as '1' | '2' | '3') : null;
+  const rankSpec = rankKey ? stage.ranks[rankKey] : null;
+  const activeSpec = rankSpec ?? stage.regular;
+
+  const title = options.customTitle?.trim() ? options.customTitle.trim() : activeSpec.title;
+  const ariaLabel = rankSpec
+    ? `Lv.${safeLevel} ${stage.title}阶段第${rankSpec.rank}名限定称号：${title}`
+    : `Lv.${safeLevel} ${stage.title}阶段称号：${title}`;
+
   return {
-    ...variant,
     themeId: theme.id,
-    level: normalizedLevel,
-    rank: place,
-    stage,
-    title: customTitle?.trim() || variant.title,
-    darkBackground: variant.darkBackground ?? variant.background,
-    darkBorder: variant.darkBorder ?? variant.border,
-    darkTextColor: variant.darkTextColor ?? variant.textColor,
-    effect: variant.effect ?? stage.effect,
-    motion: variant.motion ?? { kind: "none", duration: "0s" },
-    scrim: variant.scrim ?? "transparent",
+    stageId: stage.id,
+    stageIndex: stage.index,
+    stageLabel: stage.label,
+    stageTitle: stage.title,
+    level: options.level,
+    normalizedLevel: safeLevel,
+    rank: safeRank,
+    isLimited: Boolean(rankSpec),
+    stamp: rankSpec ? rankSpec.stamp : null,
+    tier: rankSpec ? rankSpec.tier : null,
+    title,
+    icon: stage.icon,
+    surface: activeSpec.surface,
+    effect: activeSpec.effect,
+    texture: activeSpec.texture,
+    tokens: {
+      light: activeSpec.light,
+      dark: activeSpec.dark,
+    },
+    ariaLabel,
   };
 }
+
+export function buildBadgeStyleVars(spec: ResolvedBadgeSpec): Record<string, string> {
+  const { light, dark } = spec.tokens;
+  const vars: Record<string, string> = {
+    '--lb-bg-light': light.bg,
+    '--lb-border-light': light.border,
+    '--lb-text-light': light.text,
+    '--lb-accent-light': light.accent,
+    '--lb-glow-light': light.glow,
+
+    '--lb-bg-dark': dark.bg,
+    '--lb-border-dark': dark.border,
+    '--lb-text-dark': dark.text,
+    '--lb-accent-dark': dark.accent,
+    '--lb-glow-dark': dark.glow,
+  };
+
+  if (light.sweepColor) vars['--lb-sweep-color-light'] = light.sweepColor;
+  if (dark.sweepColor) vars['--lb-sweep-color-dark'] = dark.sweepColor;
+  if (light.pulseColor) vars['--lb-pulse-color-light'] = light.pulseColor;
+  if (dark.pulseColor) vars['--lb-pulse-color-dark'] = dark.pulseColor;
+  if (light.orbitColor) vars['--lb-orbit-color-light'] = light.orbitColor;
+  if (dark.orbitColor) vars['--lb-orbit-color-dark'] = dark.orbitColor;
+  if (light.fxColor) vars['--lb-fx-color-light'] = light.fxColor;
+  if (dark.fxColor) vars['--lb-fx-color-dark'] = dark.fxColor;
+
+  return vars;
+}
+
+export { normalizeRank as normalizeBadgeRank };

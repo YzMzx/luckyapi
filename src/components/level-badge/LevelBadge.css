@@ -1,297 +1,1008 @@
-/* The nearest scheme container selects the pair of theme tokens. An empty
-   custom property contributes no CSS tokens; initial selects var's fallback.
-   This also lets a light preview live inside a dark console (and vice versa). */
-:where(:root, .admin-light, [data-theme="light"]) {
-  --lb-use-day: ;
-  --lb-use-night: initial;
-}
-@media (prefers-color-scheme: dark) {
-  :where(:root:not(.admin-light):not([data-theme="light"])) {
-    --lb-use-day: initial;
-    --lb-use-night: ;
-  }
-}
-:where(.dark:not([data-theme="light"]), [data-theme="dark"]) {
-  --lb-use-day: initial;
-  --lb-use-night: ;
+/* ==========================================================================
+   Nature Level Badge Kit v2 — Design Tokens & Bespoke Top-3 Motion System
+   - CSS Houdini @property conic-gradient border beam (with graceful fallback)
+   - Stage-specific natural motion choreography for all 18 Top-3 limited badges
+   - GPU-composited motion (transform, opacity, custom angle)
+   - Automatic Light / Dark mode + prefers-reduced-motion compliance
+   ========================================================================== */
+
+@property --lb-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
 }
 
-.level-badge {
-  --lb-surface: var(--lb-use-day, var(--lb-dark-surface))
-    var(--lb-use-night, var(--lb-light-surface));
-  --lb-edge: var(--lb-use-day, var(--lb-dark-edge))
-    var(--lb-use-night, var(--lb-light-edge));
-  --lb-ink: var(--lb-use-day, var(--lb-dark-ink))
-    var(--lb-use-night, var(--lb-light-ink));
-  --lb-rim: var(--lb-use-day, rgba(255, 255, 255, 0.08))
-    var(--lb-use-night, transparent);
-  --lb-height: 2rem;
-  --lb-font: 0.875rem;
-  --lb-padding: 0.72em;
-  --lb-hairline: var(--badge-border-width, 1px);
-  --lb-round: var(--badge-radius, 999px);
-  --lb-finish: inset 0 0 0 0 transparent;
+.lb-badge {
+  /* Active semantic tokens (default: light mode) */
+  --lb-bg: var(--lb-bg-light, linear-gradient(135deg, #f7f9f2 0%, #ebf2dc 100%));
+  --lb-border: var(--lb-border-light, #c5d89d);
+  --lb-text: var(--lb-text-light, #3f5219);
+  --lb-accent: var(--lb-accent-light, #6e8b32);
+  --lb-glow: var(--lb-glow-light, none);
+  --lb-sweep-color: var(--lb-sweep-color-light, rgba(255, 255, 255, 0.34));
+  --lb-pulse-color: var(--lb-pulse-color-light, rgba(165, 180, 252, 0.32));
+  --lb-orbit-color: var(--lb-orbit-color-light, transparent);
+  --lb-fx-color: var(--lb-fx-color-light, rgba(255, 255, 255, 0.65));
+
+  /* Sizing tokens (md default) */
+  --lb-height: 27px;
+  --lb-px: 10.5px;
+  --lb-gap: 5px;
+  --lb-font-size: 12.5px;
+  --lb-icon-size: 13.5px;
+  --lb-border-width: 1px;
+  --lb-radius: 9999px;
+
   position: relative;
-  isolation: isolate;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: var(--lb-gap);
+  height: var(--lb-height);
+  padding: 0 var(--lb-px);
+  border-radius: var(--lb-radius);
+  background: var(--lb-bg);
+  color: var(--lb-text);
+  box-shadow: var(--lb-glow);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  font-size: var(--lb-font-size);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
   vertical-align: middle;
-  gap: var(--badge-gap, 0.37em);
+  user-select: none;
   box-sizing: border-box;
-  max-inline-size: 100%;
-  min-block-size: var(--badge-height, var(--lb-height));
-  padding: 0.28em var(--badge-padding-inline, var(--lb-padding));
-  border-radius: var(--lb-round);
-  background: var(--badge-bg, var(--badge-background, var(--lb-surface)));
-  color: var(--badge-text, var(--lb-ink));
-  box-shadow: var(--badge-shadow, 0 0 0 1px var(--lb-rim), var(--lb-finish));
-  font-size: var(--badge-font-size, var(--lb-font));
-  line-height: 1.25;
-}
-.level-badge[data-size="xs"] {
-  --lb-height: 1.375rem;
-  --lb-font: 0.6875rem;
-  --lb-padding: 0.55em;
-}
-.level-badge[data-size="sm"] {
-  --lb-height: 1.625rem;
-  --lb-font: 0.75rem;
-  --lb-padding: 0.62em;
-}
-.level-badge[data-size="lg"] {
-  --lb-height: 2.5rem;
-  --lb-font: 1rem;
-  --lb-padding: 0.88em;
+  isolation: isolate;
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.24s ease;
 }
 
-/* The edge has a hole: a translucent surface never reveals a solid gradient
-   underneath. Older browsers keep a single currentColor border. */
-.level-badge::before,
-.level-badge__finish,
-.level-badge__finish::after {
+/* Base crisp rounded border via CSS mask */
+.lb-badge::before {
   content: "";
-  pointer-events: none;
   position: absolute;
   inset: 0;
   border-radius: inherit;
+  padding: var(--lb-border-width);
+  background: var(--lb-border);
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 3;
 }
-.level-badge::before {
-  z-index: 1;
-  border: var(--lb-hairline) solid var(--badge-border-fallback, currentColor);
+
+/* Orbiting luminous border ring (active on Rank 1 & Galaxy Rank 2) */
+.lb-border-orbit {
+  display: none;
+  position: absolute;
+  inset: -0.5px;
+  border-radius: inherit;
+  padding: calc(var(--lb-border-width) + 0.55px);
+  background: var(--lb-orbit-color);
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 4;
+  opacity: 0.92;
+  will-change: --lb-angle;
 }
-@supports (mask-composite: exclude) {
-  .level-badge::before {
-    padding: var(--lb-hairline);
-    border: 0;
-    background: var(--badge-border, var(--lb-edge));
-    mask:
-      linear-gradient(#fff 0 0) content-box,
-      linear-gradient(#fff 0 0);
-    mask-composite: exclude;
+
+.lb-badge[data-rank="1"] {
+  --lb-border-width: 1.25px;
+}
+.lb-badge[data-stage="galaxy"] {
+  --lb-border-width: 1.25px;
+}
+
+/* Interactive hover elevation for Top-3 limited badges */
+.lb-badge[data-rank]:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+}
+.lb-badge[data-rank="1"]:hover {
+  filter: brightness(1.09) saturate(1.06);
+}
+
+/* Dark mode selectors */
+.dark .lb-badge,
+[data-theme="dark"] .lb-badge,
+.lb-dark .lb-badge,
+.lb-badge.lb-dark {
+  --lb-bg: var(--lb-bg-dark);
+  --lb-border: var(--lb-border-dark);
+  --lb-text: var(--lb-text-dark);
+  --lb-accent: var(--lb-accent-dark);
+  --lb-glow: var(--lb-glow-dark);
+  --lb-sweep-color: var(--lb-sweep-color-dark, rgba(255, 255, 255, 0.38));
+  --lb-pulse-color: var(--lb-pulse-color-dark, rgba(165, 180, 252, 0.42));
+  --lb-orbit-color: var(--lb-orbit-color-dark, transparent);
+  --lb-fx-color: var(--lb-fx-color-dark, rgba(255, 255, 255, 0.72));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not(.light) .lb-badge:not(.lb-light, [data-theme="light"] *, .admin-light *) {
+    --lb-bg: var(--lb-bg-dark);
+    --lb-border: var(--lb-border-dark);
+    --lb-text: var(--lb-text-dark);
+    --lb-accent: var(--lb-accent-dark);
+    --lb-glow: var(--lb-glow-dark);
+    --lb-sweep-color: var(--lb-sweep-color-dark, rgba(255, 255, 255, 0.38));
+    --lb-pulse-color: var(--lb-pulse-color-dark, rgba(165, 180, 252, 0.42));
+    --lb-orbit-color: var(--lb-orbit-color-dark, transparent);
+    --lb-fx-color: var(--lb-fx-color-dark, rgba(255, 255, 255, 0.72));
   }
 }
-.level-badge__finish {
-  z-index: -1;
-  overflow: hidden;
+
+/* ---------------- Sizes ---------------- */
+.lb-badge[data-size="xs"] {
+  --lb-height: 20px;
+  --lb-px: 7px;
+  --lb-gap: 3px;
+  --lb-font-size: 10.5px;
+  --lb-icon-size: 11px;
 }
-.level-badge__finish::after {
-  background: var(--badge-scrim, var(--lb-spec-scrim));
+
+.lb-badge[data-size="sm"] {
+  --lb-height: 23px;
+  --lb-px: 8.5px;
+  --lb-gap: 4px;
+  --lb-font-size: 11.5px;
+  --lb-icon-size: 12px;
 }
-.level-badge__texture {
-  width: 100%;
-  height: 100%;
+
+.lb-badge[data-size="md"] {
+  --lb-height: 27px;
+  --lb-px: 10.5px;
+  --lb-gap: 5px;
+  --lb-font-size: 12.5px;
+  --lb-icon-size: 13.5px;
+}
+
+.lb-badge[data-size="lg"] {
+  --lb-height: 34px;
+  --lb-px: 14px;
+  --lb-gap: 6.5px;
+  --lb-font-size: 14px;
+  --lb-icon-size: 16px;
+}
+
+/* ---------------- Inner Content Layers ---------------- */
+.lb-fx-clip {
   position: absolute;
   inset: 0;
-  color: var(--badge-texture-color, currentColor);
-  opacity: var(--badge-texture-opacity, 0.22);
-  /* Keep engraving visible on the rims, with a quiet band behind small type. */
-  mask-image: var(
-    --badge-texture-mask,
-    linear-gradient(to bottom, black, rgb(0 0 0 / 0.13) 34% 66%, black)
-  );
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
 }
-.level-badge[data-effect="highlight"] {
-  --lb-finish: var(--badge-highlight, inset 0 1px 0 rgb(255 255 255 / 0.7));
-}
-.level-badge[data-effect="matte"] {
-  --lb-finish: var(--badge-matte, inset 0 -2px 4px rgb(29 52 42 / 0.07));
-}
-.level-badge[data-effect="glow"] {
-  --lb-finish: var(--badge-glow, 0 0 6px rgb(122 154 214 / 0.28));
-}
-.level-badge[data-effect="glaze"] {
-  --lb-finish: var(--badge-glaze, inset 0 2px 0 rgb(255 255 255 / 0.23));
-}
-@media (hover: hover) {
-  .level-badge[data-effect="glaze"][data-rank="base"]:hover
-    .level-badge__finish {
-    background: var(
-      --badge-ripple,
-      repeating-radial-gradient(
-        ellipse at 80% 120%,
-        transparent 0 7px,
-        rgb(211 236 255 / 0.1) 8px,
-        transparent 9px 12px
-      )
-    );
-  }
-}
-.level-badge[data-rank="2"] .level-badge__finish {
-  inset: calc(var(--lb-hairline) + 1px);
-  border: var(--badge-silver-line, 1px solid rgb(147 164 182 / 0.65));
-  background: var(
-    --badge-brush,
-    repeating-linear-gradient(
-      168deg,
-      transparent 0 3px,
-      rgb(195 202 214 / 0.08) 3px 4px
-    )
-  );
-}
-.level-badge[data-rank="3"] .level-badge__finish {
-  box-shadow: var(
-    --badge-copper-glow,
-    inset 0 0 0 2px rgb(195 131 91 / 0.22),
-    inset 0 0 6px rgb(224 154 108 / 0.21)
-  );
-}
-.level-badge__glyph {
-  flex: none;
-  display: inline-grid;
-  place-items: center;
+
+.lb-icon,
+.lb-level,
+.lb-title,
+.lb-stamp {
   position: relative;
-  width: var(--badge-icon-size, 1.32em);
-  height: var(--badge-icon-size, 1.32em);
-  color: var(--badge-icon-color, currentColor);
-  line-height: 1;
+  z-index: 2;
 }
-.level-badge__glyph > svg {
+
+.lb-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--lb-icon-size);
+  height: var(--lb-icon-size);
+  color: var(--lb-accent);
+  flex-shrink: 0;
+}
+
+.lb-icon-svg {
+  display: block;
   width: 100%;
   height: 100%;
 }
-.level-badge__glyph > .level-badge__crown {
-  position: absolute;
-  top: -0.34em;
-  right: -0.08em;
-  width: 0.68em;
-  height: 0.46em;
-  color: var(--badge-crown-color, currentColor);
-}
-.level-badge__level,
-.level-badge__stamp {
-  white-space: nowrap;
+
+.lb-level {
   font-variant-numeric: tabular-nums;
-  font-family: var(--badge-number-font, "Space Grotesk", system-ui, sans-serif);
-}
-.level-badge__level {
-  font-size: 0.8em;
-  font-weight: 650;
-}
-.level-badge__title {
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-  font-weight: 720;
-  letter-spacing: 0.045em;
-}
-.level-badge__stamp {
-  padding-inline: 0.48em 0.2em;
-  border-inline-start: var(--badge-stamp-rule, 1px solid currentColor);
-  color: var(--badge-stamp-color, currentColor);
-  font-size: 0.76em;
-  letter-spacing: 0.025em;
-  font-weight: 650;
+  font-size: 0.88em;
+  font-weight: 700;
+  opacity: 0.84;
+  letter-spacing: 0.01em;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .level-badge[data-motion="slow-sweep"],
-  .level-badge[data-motion="silver-sweep"] {
-    --lb-sweep: var(
-      --badge-sweep,
-      linear-gradient(
-        105deg,
-        transparent 10%,
-        rgb(255 244 190 / 0.22) 48%,
-        transparent 88%
-      )
-    );
-    --lb-period: var(
-      --badge-sweep-duration,
-      var(--badge-motion-duration, var(--lb-spec-duration))
-    );
-  }
-  .level-badge[data-motion="silver-sweep"] {
-    --lb-sweep: var(
-      --badge-silver-sweep,
-      linear-gradient(
-        105deg,
-        transparent 12%,
-        rgb(216 236 255 / 0.25) 50%,
-        transparent 86%
-      )
-    );
-  }
-  .level-badge__motion {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-  }
-  .level-badge:is([data-motion="slow-sweep"], [data-motion="silver-sweep"])
-    .level-badge__motion {
-    background: var(--lb-sweep);
-    animation: lb-edge-sweep var(--lb-period) ease-in-out infinite;
-  }
-  .level-badge[data-motion="breathe"] .level-badge__motion {
-    background: var(
-      --badge-aura,
-      radial-gradient(
-        ellipse at 20% 50%,
-        rgb(185 173 255 / 0.16),
-        transparent 60%
-      )
-    );
-    animation: lb-halo-breathe
-      var(--badge-motion-duration, var(--lb-spec-duration)) ease-in-out infinite;
-  }
+.lb-title {
+  letter-spacing: 0.03em;
 }
-[data-plate-motion="off"] .level-badge__motion {
+
+.lb-stamp {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  margin-left: 1px;
+  border-radius: 999px;
+  font-size: 0.78em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--lb-accent);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.lb-badge[data-surface="light"] .lb-stamp {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.09);
+}
+
+.dark .lb-badge[data-surface="light"] .lb-stamp,
+[data-theme="dark"] .lb-badge[data-surface="light"] .lb-stamp,
+.lb-dark .lb-badge[data-surface="light"] .lb-stamp {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+/* ---------------- Static Subtle Surface Textures ---------------- */
+.lb-texture {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.lb-badge[data-texture="brushed"] .lb-texture {
+  background-image: repeating-linear-gradient(
+    -35deg,
+    rgba(255, 255, 255, 0.08) 0px,
+    rgba(255, 255, 255, 0.08) 1px,
+    transparent 1px,
+    transparent 5px
+  );
+}
+
+.lb-badge[data-texture="pine-grain"] .lb-texture,
+.lb-badge[data-texture="stone"] .lb-texture {
+  background-image: repeating-linear-gradient(
+    60deg,
+    rgba(24, 61, 45, 0.045) 0px,
+    rgba(24, 61, 45, 0.045) 1px,
+    transparent 1px,
+    transparent 6px
+  );
+}
+
+.lb-badge[data-texture="crystal"] .lb-texture {
+  background-image: linear-gradient(
+    115deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.13) 20.5%,
+    rgba(255, 255, 255, 0.04) 45%,
+    transparent 45.5%,
+    rgba(255, 255, 255, 0.1) 68%,
+    transparent 68.5%
+  );
+}
+
+.lb-badge[data-texture="ripple"] .lb-texture,
+.lb-badge[data-texture="rings"] .lb-texture,
+.lb-badge[data-texture="orbit"] .lb-texture {
+  background-image: radial-gradient(
+    circle at 85% 50%,
+    transparent 18%,
+    rgba(255, 255, 255, 0.09) 19%,
+    transparent 21%,
+    transparent 36%,
+    rgba(255, 255, 255, 0.07) 37%,
+    transparent 39%
+  );
+}
+
+.lb-badge[data-texture="wave"] .lb-texture {
+  background-image: radial-gradient(
+    120% 85% at 50% 125%,
+    rgba(255, 255, 255, 0.16) 0%,
+    rgba(255, 255, 255, 0.05) 38%,
+    transparent 40%
+  );
+}
+
+.lb-badge[data-texture="wave-gold"] .lb-texture {
+  background-image: radial-gradient(
+    110% 80% at 50% 125%,
+    rgba(255, 209, 102, 0.24) 0%,
+    rgba(255, 209, 102, 0.06) 36%,
+    transparent 42%
+  );
+}
+
+.lb-badge[data-texture="moon-halo"] .lb-texture {
+  background-image: radial-gradient(
+    circle at 88% 30%,
+    rgba(243, 199, 148, 0.24) 0%,
+    rgba(243, 199, 148, 0.07) 28%,
+    transparent 52%
+  );
+}
+
+.lb-badge[data-texture="tail-glow"] .lb-texture {
+  background-image: radial-gradient(
+    circle at 92% 50%,
+    rgba(253, 224, 71, 0.30) 0%,
+    transparent 55%
+  );
+}
+
+.lb-badge[data-texture="firefly-dots"] .lb-texture,
+.lb-badge[data-texture="stardust"] .lb-texture,
+.lb-badge[data-texture="constellation"] .lb-texture {
+  background-image:
+    radial-gradient(circle at 18% 28%, rgba(254, 249, 195, 0.65) 0 0.9px, transparent 1.5px),
+    radial-gradient(circle at 74% 24%, rgba(255, 255, 255, 0.7) 0 0.9px, transparent 1.4px),
+    radial-gradient(circle at 86% 70%, rgba(253, 224, 71, 0.6) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 46% 78%, rgba(224, 231, 255, 0.5) 0 0.85px, transparent 1.4px);
+  opacity: 0.72;
+}
+
+.lb-badge[data-texture="cloud-mist"] .lb-texture {
+  background-image: radial-gradient(
+    ellipse at 25% 100%,
+    rgba(255, 255, 255, 0.15) 0%,
+    transparent 62%
+  );
+}
+
+.lb-badge[data-texture="glass"] .lb-texture,
+.lb-badge[data-texture="top-sheen"] .lb-texture {
+  background-image: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.32) 0%,
+    rgba(255, 255, 255, 0) 48%
+  );
+}
+
+/* ==========================================================================
+   FX Primitive Layers (hidden by default, selectively activated per effect)
+   ========================================================================== */
+.lb-pulse {
   display: none;
-}
-@keyframes lb-edge-sweep {
-  0%,
-  48% {
-    transform: translateX(-100%);
-    opacity: var(--badge-sweep-min-opacity, 0.25);
-  }
-  72% {
-    opacity: var(--badge-sweep-max-opacity, 0.38);
-  }
-  100% {
-    transform: translateX(100%);
-    opacity: var(--badge-sweep-min-opacity, 0.25);
-  }
-}
-@keyframes lb-halo-breathe {
-  0%,
-  100% {
-    opacity: 0.2;
-  }
-  50% {
-    opacity: 0.8;
-  }
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: var(--lb-pulse-color);
+  filter: blur(7px);
+  opacity: 0.16;
+  pointer-events: none;
+  z-index: -1;
+  will-change: opacity, transform;
 }
 
-@media (forced-colors: active) {
-  .level-badge {
-    background: Canvas;
-    color: CanvasText;
-    outline: 1px solid CanvasText;
-  }
-  .level-badge::before,
-  .level-badge__finish {
-    display: none;
-  }
-  .level-badge__stamp {
-    border-inline-start-color: CanvasText;
+.lb-sweep,
+.lb-layer-a,
+.lb-layer-b,
+.lb-particles {
+  display: none;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.lb-sweep {
+  top: -45%;
+  bottom: -45%;
+  left: -65%;
+  right: auto;
+  width: 42%;
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    var(--lb-sweep-color) 48%,
+    transparent 100%
+  );
+  transform: translate3d(-120%, 0, 0) skewX(-20deg);
+  will-change: transform, opacity;
+}
+
+.lb-particles .lb-p {
+  position: absolute;
+  border-radius: 50%;
+  background: var(--lb-fx-color);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+/* ---------------- Regular Stage Subtle Effects ---------------- */
+/* Ocean regular: hover-only subtle glint */
+.lb-badge[data-animated="true"][data-effect="hover-glint"] .lb-sweep {
+  display: block;
+  opacity: 0;
+  transition: transform 0.65s ease, opacity 0.25s ease;
+}
+.lb-badge[data-animated="true"][data-effect="hover-glint"]:hover .lb-sweep {
+  opacity: 0.72;
+  transform: translate3d(420%, 0, 0) skewX(-20deg);
+}
+
+/* Galaxy regular: calm deep-space breathe */
+.lb-badge[data-animated="true"][data-effect="breathe"] .lb-pulse {
+  display: block;
+  animation: lb-breathe 6s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   RANK 1 SHARED CHOREOGRAPHY: Orbiting Border Light + Ambient Aura + Crown Pulse
+   ========================================================================== */
+.lb-badge[data-animated="true"][data-rank="1"] .lb-border-orbit {
+  display: block;
+  animation: lb-orbit-spin 4.6s linear infinite;
+}
+.lb-badge[data-animated="true"][data-rank="1"] .lb-pulse {
+  display: block;
+  animation: lb-breathe 4.2s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-rank="1"] .lb-icon {
+  animation: lb-crown-float 3.4s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   STAGE-BY-STAGE BESPOKE TOP-3 ANIMATIONS (18 DISTINCT CHOREOGRAPHIES)
+   ========================================================================== */
+
+/* ---- 1. FIREFLY (萤火) ---- */
+/* No.1 破夜初萤: Drifting warm firefly swarm + soft nocturnal gold sheen */
+.lb-badge[data-animated="true"][data-effect="firefly-swarm"] .lb-sweep {
+  display: block;
+  width: 34%;
+  animation: lb-sweep-slow 5.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.lb-badge[data-animated="true"][data-effect="firefly-swarm"] .lb-particles {
+  display: block;
+}
+.lb-badge[data-animated="true"][data-effect="firefly-swarm"] .lb-p1 {
+  left: 18%; bottom: 22%; width: 3px; height: 3px;
+  box-shadow: 0 0 6px var(--lb-fx-color);
+  animation: lb-firefly-a 3.8s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-effect="firefly-swarm"] .lb-p2 {
+  left: 48%; top: 24%; width: 2.2px; height: 2.2px;
+  box-shadow: 0 0 5px var(--lb-fx-color);
+  animation: lb-firefly-b 4.5s ease-in-out 0.9s infinite;
+}
+.lb-badge[data-animated="true"][data-effect="firefly-swarm"] .lb-p3 {
+  right: 26%; bottom: 24%; width: 2.8px; height: 2.8px;
+  box-shadow: 0 0 6px var(--lb-fx-color);
+  animation: lb-firefly-a 4.2s ease-in-out 1.8s infinite;
+}
+.lb-badge[data-animated="true"][data-effect="firefly-swarm"] .lb-p4 {
+  right: 12%; top: 30%; width: 2px; height: 2px;
+  box-shadow: 0 0 4px var(--lb-fx-color);
+  animation: lb-firefly-b 3.4s ease-in-out 2.5s infinite;
+}
+
+/* No.2 林间星火: Cool silver forest starlight twinkle + slender sheen */
+.lb-badge[data-animated="true"][data-effect="silver-twinkle"] .lb-sweep {
+  display: block;
+  width: 22%;
+  animation: lb-sweep-crisp 5.6s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-effect="silver-twinkle"] .lb-particles {
+  display: block;
+}
+.lb-badge[data-animated="true"][data-effect="silver-twinkle"] .lb-p1 {
+  left: 24%; top: 26%; width: 2.2px; height: 2.2px;
+  animation: lb-twinkle 2.8s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-effect="silver-twinkle"] .lb-p2 {
+  right: 22%; bottom: 26%; width: 2.5px; height: 2.5px;
+  animation: lb-twinkle 3.4s ease-in-out 1.2s infinite;
+}
+
+/* No.3 微芒引路: Warm guiding tail-beacon breathing pulse */
+.lb-badge[data-animated="true"][data-effect="beacon-pulse"] .lb-layer-a {
+  display: block;
+  background: radial-gradient(circle at 92% 50%, var(--lb-fx-color) 0%, transparent 56%);
+  animation: lb-beacon-breathe 3.6s ease-in-out infinite;
+}
+
+/* ---- 2. SPRING (清泉) ---- */
+/* No.1 雪山源泉: Dual crossed glacier prism beams + ice sparkle */
+.lb-badge[data-animated="true"][data-effect="glacier-prism"] .lb-sweep {
+  display: block;
+  width: 30%;
+  background: linear-gradient(
+    112deg,
+    transparent 0%,
+    rgba(224, 252, 255, 0.5) 35%,
+    rgba(253, 230, 138, 0.48) 60%,
+    transparent 100%
+  );
+  animation: lb-sweep-slow 4.2s cubic-bezier(0.35, 0, 0.25, 1) infinite;
+}
+.lb-badge[data-animated="true"][data-effect="glacier-prism"] .lb-layer-a {
+  display: block;
+  background: linear-gradient(
+    65deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.22) 48%,
+    transparent 62%
+  );
+  transform: translate3d(120%, 0, 0);
+  animation: lb-prism-counter 5.8s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-effect="glacier-prism"] .lb-particles {
+  display: block;
+}
+.lb-badge[data-animated="true"][data-effect="glacier-prism"] .lb-p1 {
+  left: 32%; top: 18%; width: 2.6px; height: 2.6px;
+  border-radius: 1px;
+  transform: rotate(45deg);
+  animation: lb-crystal-flash 3.2s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-effect="glacier-prism"] .lb-p2 {
+  right: 28%; bottom: 20%; width: 2.2px; height: 2.2px;
+  border-radius: 1px;
+  transform: rotate(45deg);
+  animation: lb-crystal-flash 3.6s ease-in-out 1.5s infinite;
+}
+
+/* No.2 听松鸣涧: Concentric expanding mountain-spring water ripples */
+.lb-badge[data-animated="true"][data-effect="water-ripple"] .lb-layer-a,
+.lb-badge[data-animated="true"][data-effect="water-ripple"] .lb-layer-b {
+  display: block;
+  inset: auto;
+  right: 14%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin-top: -11px;
+  border-radius: 50%;
+  border: 1.2px solid var(--lb-fx-color);
+  opacity: 0;
+}
+.lb-badge[data-animated="true"][data-effect="water-ripple"] .lb-layer-a {
+  animation: lb-ripple-ring 3.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+.lb-badge[data-animated="true"][data-effect="water-ripple"] .lb-layer-b {
+  animation: lb-ripple-ring 3.8s cubic-bezier(0.16, 1, 0.3, 1) 1.9s infinite;
+}
+.lb-badge[data-animated="true"][data-effect="water-ripple"] .lb-sweep {
+  display: block;
+  width: 24%;
+  animation: lb-sweep-crisp 6.2s ease-in-out infinite;
+}
+
+/* No.3 玉露清溪: Dewdrop specular shimmer along glass surface */
+.lb-badge[data-animated="true"][data-effect="dew-glint"] .lb-layer-a {
+  display: block;
+  background: radial-gradient(circle at 26% 24%, var(--lb-fx-color) 0%, transparent 28%),
+    radial-gradient(circle at 76% 28%, var(--lb-fx-color) 0%, transparent 24%);
+  animation: lb-dew-shimmer 4s ease-in-out infinite;
+}
+
+/* ---- 3. PINE (劲松) ---- */
+/* No.1 凌云古松: Golden pine-canopy wave + floating amber pollen */
+.lb-badge[data-animated="true"][data-effect="pine-goldflow"] .lb-layer-a {
+  display: block;
+  width: 180%;
+  left: -40%;
+  background: radial-gradient(
+    ellipse 45% 90% at 50% 50%,
+    rgba(243, 202, 98, 0.24) 0%,
+    transparent 70%
+  );
+  animation: lb-canopy-sway 5.4s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-effect="pine-goldflow"] .lb-sweep {
+  display: block;
+  width: 36%;
+  animation: lb-sweep-slow 4.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.lb-badge[data-animated="true"][data-effect="pine-goldflow"] .lb-particles {
+  display: block;
+}
+.lb-badge[data-animated="true"][data-effect="pine-goldflow"] .lb-p1 {
+  left: 28%; top: 12%; width: 2.2px; height: 2.2px;
+  animation: lb-leaf-drift 4.4s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-effect="pine-goldflow"] .lb-p2 {
+  right: 30%; top: 16%; width: 2px; height: 2px;
+  animation: lb-leaf-drift 5.1s ease-in-out 2.1s infinite;
+}
+
+/* No.2 听涛苍柏: Dual metallic brushed silver sheen */
+.lb-badge[data-animated="true"][data-effect="silver-sheen"] .lb-sweep {
+  display: block;
+  width: 24%;
+  animation: lb-sweep-crisp 4.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.lb-badge[data-animated="true"][data-effect="silver-sheen"] .lb-layer-a {
+  display: block;
+  background: linear-gradient(90deg, transparent 0%, var(--lb-fx-color) 50%, transparent 100%);
+  width: 60%;
+  animation: lb-horizontal-glaze 5.8s ease-in-out infinite;
+}
+
+/* No.3 青崖翠杉: Steady warm bronze mineral edge breath */
+.lb-badge[data-animated="true"][data-effect="bronze-breath"] .lb-layer-a {
+  display: block;
+  background: linear-gradient(120deg, transparent 15%, var(--lb-fx-color) 50%, transparent 85%);
+  animation: lb-soft-breath 4.4s ease-in-out infinite;
+}
+
+/* ---- 4. CLOUD (流云) ---- */
+/* No.1 九天垂云: Drifting celestial violet-gold cloud aurora + warm sunset sweep */
+.lb-badge[data-animated="true"][data-effect="cloud-aurora"] .lb-layer-a {
+  display: block;
+  width: 220%;
+  left: -60%;
+  background:
+    radial-gradient(ellipse 36% 80% at 30% 85%, rgba(246, 201, 110, 0.34) 0%, transparent 72%),
+    radial-gradient(ellipse 40% 75% at 72% 25%, var(--lb-fx-color) 0%, transparent 70%);
+  animation: lb-cloud-drift 7.2s ease-in-out infinite alternate;
+}
+.lb-badge[data-animated="true"][data-effect="cloud-aurora"] .lb-sweep {
+  display: block;
+  width: 40%;
+  animation: lb-sweep-slow 4.8s ease-in-out infinite;
+}
+
+/* No.2 归岫闲云: Soft drifting silver-blue mist veil */
+.lb-badge[data-animated="true"][data-effect="mist-drift"] .lb-layer-a {
+  display: block;
+  width: 200%;
+  left: -50%;
+  background:
+    radial-gradient(ellipse 34% 85% at 35% 85%, var(--lb-fx-color) 0%, transparent 68%),
+    radial-gradient(ellipse 30% 70% at 70% 25%, rgba(255, 255, 255, 0.2) 0%, transparent 65%);
+  animation: lb-cloud-drift 6.4s ease-in-out infinite alternate;
+}
+.lb-badge[data-animated="true"][data-effect="mist-drift"] .lb-sweep {
+  display: block;
+  width: 20%;
+  animation: lb-sweep-crisp 6.4s ease-in-out infinite;
+}
+
+/* No.3 晴空鹤影: Graceful diagonal crane-feather warm shimmer */
+.lb-badge[data-animated="true"][data-effect="feather-glide"] .lb-layer-a {
+  display: block;
+  width: 55%;
+  left: -30%;
+  background: linear-gradient(115deg, transparent 10%, var(--lb-fx-color) 50%, transparent 90%);
+  transform: skewX(-22deg);
+  animation: lb-feather-pass 5.2s ease-in-out infinite;
+}
+
+/* ---- 5. OCEAN (沧海) ---- */
+/* No.1 东临沧海: Dual-phase golden sunlit tide swell + rising sunrise glint */
+.lb-badge[data-animated="true"][data-effect="ocean-tide"] .lb-layer-a {
+  display: block;
+  top: 44%;
+  height: 110%;
+  width: 200%;
+  left: -50%;
+  background:
+    radial-gradient(ellipse 32% 55% at 28% 55%, var(--lb-fx-color) 0%, transparent 72%),
+    radial-gradient(ellipse 34% 55% at 74% 60%, rgba(125, 211, 252, 0.30) 0%, transparent 72%);
+  animation: lb-tide-wave-a 4.8s ease-in-out infinite alternate;
+}
+.lb-badge[data-animated="true"][data-effect="ocean-tide"] .lb-layer-b {
+  display: block;
+  top: 52%;
+  height: 90%;
+  width: 190%;
+  left: -45%;
+  background: radial-gradient(ellipse 28% 48% at 52% 50%, rgba(255, 232, 163, 0.35) 0%, transparent 70%);
+  animation: lb-tide-wave-b 3.9s ease-in-out infinite alternate;
+}
+.lb-badge[data-animated="true"][data-effect="ocean-tide"] .lb-sweep {
+  display: block;
+  width: 34%;
+  animation: lb-sweep-slow 4.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* No.2 扶摇巨鲲: Deep-sea streamlined current glide */
+.lb-badge[data-animated="true"][data-effect="current-glide"] .lb-layer-a {
+  display: block;
+  top: 55%;
+  height: 60%;
+  width: 160%;
+  left: -30%;
+  background: linear-gradient(90deg, transparent 0%, var(--lb-fx-color) 45%, rgba(255,255,255,0.28) 55%, transparent 100%);
+  animation: lb-current-flow 4.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.lb-badge[data-animated="true"][data-effect="current-glide"] .lb-sweep {
+  display: block;
+  width: 22%;
+  animation: lb-sweep-crisp 5.4s ease-in-out infinite;
+}
+
+/* No.3 潮生明月: Breathing lunar reflection on calm water */
+.lb-badge[data-animated="true"][data-effect="moon-tide"] .lb-layer-a {
+  display: block;
+  background: radial-gradient(circle at 88% 26%, var(--lb-fx-color) 0%, transparent 48%);
+  animation: lb-moon-breathe 4.2s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-effect="moon-tide"] .lb-layer-b {
+  display: block;
+  top: 66%;
+  height: 36%;
+  background: linear-gradient(90deg, transparent 35%, rgba(243, 199, 148, 0.30) 78%, transparent 96%);
+  animation: lb-moon-shimmer 4.2s ease-in-out infinite;
+}
+
+/* ---- 6. GALAXY (星河 — Pinnacle Tier) ---- */
+/* No.1 银河之心: Full-ring prismatic conic orbit + nebula drift + stardust rise + comet sweep */
+.lb-badge[data-animated="true"][data-effect="galaxy-supernova"] .lb-border-orbit {
+  animation: lb-orbit-spin 3.2s linear infinite;
+  opacity: 1;
+}
+.lb-badge[data-animated="true"][data-effect="galaxy-supernova"] .lb-layer-a {
+  display: block;
+  width: 210%;
+  left: -55%;
+  background:
+    radial-gradient(ellipse 35% 90% at 30% 45%, rgba(192, 132, 252, 0.38) 0%, transparent 68%),
+    radial-gradient(ellipse 34% 85% at 72% 60%, rgba(96, 165, 250, 0.34) 0%, transparent 68%);
+  animation: lb-cloud-drift 5.6s ease-in-out infinite alternate;
+}
+.lb-badge[data-animated="true"][data-effect="galaxy-supernova"] .lb-sweep {
+  display: block;
+  width: 38%;
+  background: linear-gradient(
+    108deg,
+    transparent 0%,
+    rgba(253, 224, 71, 0.38) 32%,
+    rgba(255, 255, 255, 0.56) 52%,
+    rgba(192, 132, 252, 0.36) 72%,
+    transparent 100%
+  );
+  animation: lb-sweep-slow 3.8s cubic-bezier(0.35, 0, 0.2, 1) infinite;
+}
+.lb-badge[data-animated="true"][data-effect="galaxy-supernova"] .lb-particles {
+  display: block;
+}
+.lb-badge[data-animated="true"][data-effect="galaxy-supernova"] .lb-p1 {
+  left: 16%; bottom: 20%; width: 2.8px; height: 2.8px;
+  background: #fef08a; box-shadow: 0 0 6px #fde047;
+  animation: lb-star-rise 3.4s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-effect="galaxy-supernova"] .lb-p2 {
+  left: 44%; top: 22%; width: 2.4px; height: 2.4px;
+  background: #ffffff; box-shadow: 0 0 6px #c084fc;
+  animation: lb-twinkle 2.4s ease-in-out 0.6s infinite;
+}
+.lb-badge[data-animated="true"][data-effect="galaxy-supernova"] .lb-p3 {
+  right: 28%; bottom: 18%; width: 2.6px; height: 2.6px;
+  background: #93c5fd; box-shadow: 0 0 6px #60a5fa;
+  animation: lb-star-rise 4.1s ease-in-out 1.3s infinite;
+}
+.lb-badge[data-animated="true"][data-effect="galaxy-supernova"] .lb-p4 {
+  right: 12%; top: 26%; width: 2.2px; height: 2.2px;
+  background: #f5d0fe; box-shadow: 0 0 5px #e879f9;
+  animation: lb-twinkle 2.9s ease-in-out 1.9s infinite;
+}
+
+/* No.2 北斗天枢: Subtle silver orbit accent + staggered 4-star constellation twinkle + cold sweep */
+.lb-badge[data-animated="true"][data-effect="constellation-pulse"] .lb-border-orbit {
+  display: block;
+  animation: lb-orbit-spin 6.4s linear infinite;
+  opacity: 0.78;
+}
+.lb-badge[data-animated="true"][data-effect="constellation-pulse"] .lb-sweep {
+  display: block;
+  width: 26%;
+  animation: lb-sweep-crisp 5s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-effect="constellation-pulse"] .lb-particles {
+  display: block;
+}
+.lb-badge[data-animated="true"][data-effect="constellation-pulse"] .lb-p1 {
+  left: 20%; top: 28%; width: 2.3px; height: 2.3px;
+  box-shadow: 0 0 5px var(--lb-fx-color);
+  animation: lb-twinkle 2.6s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-effect="constellation-pulse"] .lb-p2 {
+  left: 48%; bottom: 24%; width: 2px; height: 2px;
+  box-shadow: 0 0 4px var(--lb-fx-color);
+  animation: lb-twinkle 3.2s ease-in-out 0.8s infinite;
+}
+.lb-badge[data-animated="true"][data-effect="constellation-pulse"] .lb-p3 {
+  right: 30%; top: 24%; width: 2.4px; height: 2.4px;
+  box-shadow: 0 0 5px var(--lb-fx-color);
+  animation: lb-twinkle 2.8s ease-in-out 1.6s infinite;
+}
+.lb-badge[data-animated="true"][data-effect="constellation-pulse"] .lb-p4 {
+  right: 14%; bottom: 28%; width: 2px; height: 2px;
+  box-shadow: 0 0 4px var(--lb-fx-color);
+  animation: lb-twinkle 3.4s ease-in-out 2.2s infinite;
+}
+
+/* No.3 织梦星轨: Rose-gold orbital arc shimmer + 2 twin dream stars */
+.lb-badge[data-animated="true"][data-effect="orbit-shimmer"] .lb-layer-a {
+  display: block;
+  inset: -45% -15%;
+  border-radius: 50%;
+  border: 1px solid var(--lb-fx-color);
+  opacity: 0.32;
+  animation: lb-orbit-tilt 7s linear infinite;
+}
+.lb-badge[data-animated="true"][data-effect="orbit-shimmer"] .lb-particles {
+  display: block;
+}
+.lb-badge[data-animated="true"][data-effect="orbit-shimmer"] .lb-p1 {
+  left: 26%; top: 24%; width: 2.2px; height: 2.2px;
+  animation: lb-twinkle 3.4s ease-in-out infinite;
+}
+.lb-badge[data-animated="true"][data-effect="orbit-shimmer"] .lb-p2 {
+  right: 22%; bottom: 24%; width: 2.2px; height: 2.2px;
+  animation: lb-twinkle 3.8s ease-in-out 1.7s infinite;
+}
+
+/* ==========================================================================
+   Keyframes (Strictly GPU-friendly: transform, opacity, --lb-angle)
+   ========================================================================== */
+@keyframes lb-orbit-spin {
+  to { --lb-angle: 360deg; }
+}
+
+@keyframes lb-breathe {
+  0%, 100% { opacity: 0.14; transform: scale(0.98); }
+  50% { opacity: 0.48; transform: scale(1.04); }
+}
+
+@keyframes lb-crown-float {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-0.8px) scale(1.06); }
+}
+
+@keyframes lb-sweep-slow {
+  0%, 54% { transform: translate3d(-120%, 0, 0) skewX(-20deg); opacity: 0.85; }
+  86%, 100% { transform: translate3d(440%, 0, 0) skewX(-20deg); opacity: 0.85; }
+}
+
+@keyframes lb-sweep-crisp {
+  0%, 66% { transform: translate3d(-120%, 0, 0) skewX(-24deg); opacity: 0.78; }
+  92%, 100% { transform: translate3d(520%, 0, 0) skewX(-24deg); opacity: 0.78; }
+}
+
+@keyframes lb-firefly-a {
+  0%, 100% { opacity: 0; transform: translate3d(0, 3px, 0) scale(0.5); }
+  28% { opacity: 0.95; transform: translate3d(6px, -4px, 0) scale(1.15); }
+  62% { opacity: 0.45; transform: translate3d(-4px, -7px, 0) scale(0.85); }
+  88% { opacity: 0; transform: translate3d(3px, -10px, 0) scale(0.4); }
+}
+
+@keyframes lb-firefly-b {
+  0%, 100% { opacity: 0; transform: translate3d(0, 0, 0) scale(0.5); }
+  35% { opacity: 0.9; transform: translate3d(-7px, 4px, 0) scale(1.1); }
+  70% { opacity: 0.35; transform: translate3d(5px, -3px, 0) scale(0.8); }
+  92% { opacity: 0; transform: translate3d(8px, -6px, 0) scale(0.4); }
+}
+
+@keyframes lb-twinkle {
+  0%, 100% { opacity: 0.12; transform: scale(0.65); }
+  50% { opacity: 0.96; transform: scale(1.25); }
+}
+
+@keyframes lb-beacon-breathe {
+  0%, 100% { opacity: 0.28; transform: scale(0.95); }
+  50% { opacity: 0.92; transform: scale(1.06); }
+}
+
+@keyframes lb-prism-counter {
+  0%, 55% { transform: translate3d(110%, 0, 0); opacity: 0; }
+  72% { opacity: 0.8; }
+  95%, 100% { transform: translate3d(-110%, 0, 0); opacity: 0; }
+}
+
+@keyframes lb-crystal-flash {
+  0%, 100% { opacity: 0; transform: rotate(45deg) scale(0.4); }
+  45% { opacity: 0.95; transform: rotate(45deg) scale(1.3); }
+  65% { opacity: 0.25; transform: rotate(45deg) scale(0.85); }
+}
+
+@keyframes lb-ripple-ring {
+  0% { opacity: 0.72; transform: scale(0.35); }
+  100% { opacity: 0; transform: scale(2.8); }
+}
+
+@keyframes lb-dew-shimmer {
+  0%, 100% { opacity: 0.25; transform: translate3d(-4px, 0, 0); }
+  50% { opacity: 0.95; transform: translate3d(4px, 0, 0); }
+}
+
+@keyframes lb-canopy-sway {
+  0%, 100% { transform: translate3d(-16%, 0, 0); opacity: 0.45; }
+  50% { transform: translate3d(16%, 0, 0); opacity: 0.85; }
+}
+
+@keyframes lb-leaf-drift {
+  0% { opacity: 0; transform: translate3d(0, -3px, 0) scale(0.6); }
+  30% { opacity: 0.9; transform: translate3d(6px, 5px, 0) scale(1); }
+  75% { opacity: 0.65; transform: translate3d(-2px, 12px, 0) scale(0.85); }
+  100% { opacity: 0; transform: translate3d(4px, 18px, 0) scale(0.4); }
+}
+
+@keyframes lb-horizontal-glaze {
+  0%, 100% { transform: translate3d(-85%, 0, 0); opacity: 0.25; }
+  50% { transform: translate3d(150%, 0, 0); opacity: 0.65; }
+}
+
+@keyframes lb-soft-breath {
+  0%, 100% { opacity: 0.16; }
+  50% { opacity: 0.68; }
+}
+
+@keyframes lb-cloud-drift {
+  0% { transform: translate3d(-14%, 2px, 0); opacity: 0.68; }
+  100% { transform: translate3d(14%, -2px, 0); opacity: 1; }
+}
+
+@keyframes lb-feather-pass {
+  0%, 45% { transform: translate3d(-80%, 0, 0) skewX(-22deg); opacity: 0; }
+  70% { opacity: 0.78; }
+  100% { transform: translate3d(260%, 0, 0) skewX(-22deg); opacity: 0; }
+}
+
+@keyframes lb-tide-wave-a {
+  0% { transform: translate3d(-12%, 2px, 0); opacity: 0.7; }
+  100% { transform: translate3d(12%, -3px, 0); opacity: 1; }
+}
+
+@keyframes lb-tide-wave-b {
+  0% { transform: translate3d(10%, -2px, 0); opacity: 0.55; }
+  100% { transform: translate3d(-10%, 3px, 0); opacity: 0.95; }
+}
+
+@keyframes lb-current-flow {
+  0% { transform: translate3d(-90%, 0, 0); opacity: 0; }
+  35% { opacity: 0.75; }
+  75% { opacity: 0.55; }
+  100% { transform: translate3d(95%, 0, 0); opacity: 0; }
+}
+
+@keyframes lb-moon-breathe {
+  0%, 100% { opacity: 0.35; transform: scale(0.94); }
+  50% { opacity: 0.95; transform: scale(1.06); }
+}
+
+@keyframes lb-moon-shimmer {
+  0%, 100% { opacity: 0.22; transform: translate3d(-4px, 0, 0); }
+  50% { opacity: 0.8; transform: translate3d(4px, 0, 0); }
+}
+
+@keyframes lb-star-rise {
+  0%, 100% { opacity: 0; transform: translate3d(0, 3px, 0) scale(0.5); }
+  40% { opacity: 1; transform: translate3d(4px, -6px, 0) scale(1.25); }
+  80% { opacity: 0; transform: translate3d(-2px, -13px, 0) scale(0.6); }
+}
+
+@keyframes lb-orbit-tilt {
+  0% { transform: rotate(0deg) scaleY(0.46); opacity: 0.22; }
+  50% { transform: rotate(180deg) scaleY(0.46); opacity: 0.55; }
+  100% { transform: rotate(360deg) scaleY(0.46); opacity: 0.22; }
+}
+
+/* Accessibility reduced-motion compliance */
+@media (prefers-reduced-motion: reduce) {
+  .lb-border-orbit,
+  .lb-sweep,
+  .lb-pulse,
+  .lb-layer-a,
+  .lb-layer-b,
+  .lb-particles .lb-p,
+  .lb-icon {
+    animation: none !important;
+    transition: none !important;
   }
 }

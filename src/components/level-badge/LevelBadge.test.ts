@@ -27,12 +27,12 @@ it("preserves semantics when a compact consumer overrides the title and icon", (
     customTitle: "同行者",
     icon: createElement("i", { className: "custom-icon" }),
     className: "profile-mark",
-    style: { "--badge-radius": "8px" },
+    style: { "--lb-radius": "8px" },
   });
   expect(html).toContain('aria-label="Lv.45 沧海阶段第2名限定称号：同行者"');
   expect(html).not.toContain(">Lv.45<");
   expect(html).not.toContain("No.02");
   expect(html).toContain("custom-icon");
   expect(html).toContain("profile-mark");
-  expect(html).toContain("--badge-radius:8px");
+  expect(html).toContain("--lb-radius:8px");
 });

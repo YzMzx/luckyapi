@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { Link } from "react-router";
 import { LevelBadge } from "./LevelBadge";
-import { natureTheme, getStageMinLevel } from "./themes";
+import { natureTheme } from "./themes";
 import type { BadgeRank, BadgeSize } from "./types";
 import "./LevelBadgeShowcase.css";
 
@@ -293,12 +293,9 @@ export default function LevelBadgeShowcase() {
             </div>
           </div>
           <div className="atlas-grid">
-            {stages.map((stage, index) => {
-              const level = getStageMinLevel(stage, index);
-              const nextStage = stages[index + 1];
-              const range = nextStage
-                ? level + "–" + (getStageMinLevel(nextStage, index + 1) - 1)
-                : level + "+";
+            {stages.map((stage) => {
+              const level = stage.minLevel;
+              const range = stage.maxLevel === null ? `${level}+` : `${level}–${stage.maxLevel}`;
               return (
                 <article
                   key={stage.id}
@@ -308,7 +305,7 @@ export default function LevelBadgeShowcase() {
                   <header className="atlas-stage-cover">
                     <div>
                       <p>{stage.id.toUpperCase()}</p>
-                      <h3>{stage.name}</h3>
+                      <h3>{stage.title}</h3>
                     </div>
                     <span className="atlas-range">Lv. {range}</span>
                   </header>

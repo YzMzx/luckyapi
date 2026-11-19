@@ -1,7 +1,2 @@
-export { natureTheme } from "./nature";
-export {
-  badgeThemes,
-  getBadgeTheme,
-  getStageMinLevel,
-  registerBadgeTheme,
-} from "./registry";
+export { NATURE_THEME as natureTheme } from "./nature";
+export { registerBadgeTheme, getBadgeTheme, listBadgeThemes } from "./registry";

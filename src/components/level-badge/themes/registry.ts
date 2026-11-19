@@ -1,34 +1,28 @@
-import type { BadgeStageConfig, BadgeThemeConfig } from "../types";
-import { natureTheme } from "./nature";
+import type { BadgeThemeConfig } from '../types';
+import { NATURE_THEME } from './nature';
 
-const themes: BadgeThemeConfig[] = [natureTheme];
-export const badgeThemes: readonly BadgeThemeConfig[] = themes;
+const themeRegistry = new Map<string, BadgeThemeConfig>([
+  [NATURE_THEME.id, NATURE_THEME],
+]);
 
-export function getStageMinLevel(
-  stage: BadgeStageConfig,
-  index: number
-): number {
-  return stage.minLevel ?? 1 + index * 10;
-}
+export const DEFAULT_THEME_ID = NATURE_THEME.id;
 
-/** Register during app setup. Re-registering an id replaces the previous config. */
 export function registerBadgeTheme(theme: BadgeThemeConfig): void {
-  if (!theme.id.trim() || !theme.stages.length) {
-    throw new Error("徽章主题需要标识和至少一个阶段");
+  if (!theme || !theme.id || !Array.isArray(theme.stages) || theme.stages.length === 0) {
+    throw new Error('Invalid badge theme: requires non-empty id and at least one stage.');
   }
-  let previous = 0;
-  for (const [index, stage] of theme.stages.entries()) {
-    const min = getStageMinLevel(stage, index);
-    if (!Number.isSafeInteger(min) || min <= previous) {
-      throw new RangeError("徽章等级阈值必须是严格递增的正整数");
-    }
-    previous = min;
-  }
-  const index = themes.findIndex(item => item.id === theme.id);
-  if (index === -1) themes.push(theme);
-  else themes[index] = theme;
+  const sortedStages = [...theme.stages].sort((a, b) => a.minLevel - b.minLevel);
+  themeRegistry.set(theme.id, { ...theme, stages: sortedStages });
 }
 
-export function getBadgeTheme(themeId?: string): BadgeThemeConfig {
-  return themes.find(theme => theme.id === themeId) ?? themes[0];
+export function getBadgeTheme(themeId: string = DEFAULT_THEME_ID): BadgeThemeConfig {
+  return themeRegistry.get(themeId) ?? themeRegistry.get(DEFAULT_THEME_ID) ?? NATURE_THEME;
+}
+
+export function listBadgeThemes(): BadgeThemeConfig[] {
+  return Array.from(themeRegistry.values());
+}
+
+export function hasBadgeTheme(themeId: string): boolean {
+  return themeRegistry.has(themeId);
 }
