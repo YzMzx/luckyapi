@@ -1,0 +1,297 @@
+/* The nearest scheme container selects the pair of theme tokens. An empty
+   custom property contributes no CSS tokens; initial selects var's fallback.
+   This also lets a light preview live inside a dark console (and vice versa). */
+:where(:root, .admin-light, [data-theme="light"]) {
+  --lb-use-day: ;
+  --lb-use-night: initial;
+}
+@media (prefers-color-scheme: dark) {
+  :where(:root:not(.admin-light):not([data-theme="light"])) {
+    --lb-use-day: initial;
+    --lb-use-night: ;
+  }
+}
+:where(.dark:not([data-theme="light"]), [data-theme="dark"]) {
+  --lb-use-day: initial;
+  --lb-use-night: ;
+}
+
+.level-badge {
+  --lb-surface: var(--lb-use-day, var(--lb-dark-surface))
+    var(--lb-use-night, var(--lb-light-surface));
+  --lb-edge: var(--lb-use-day, var(--lb-dark-edge))
+    var(--lb-use-night, var(--lb-light-edge));
+  --lb-ink: var(--lb-use-day, var(--lb-dark-ink))
+    var(--lb-use-night, var(--lb-light-ink));
+  --lb-rim: var(--lb-use-day, rgba(255, 255, 255, 0.08))
+    var(--lb-use-night, transparent);
+  --lb-height: 2rem;
+  --lb-font: 0.875rem;
+  --lb-padding: 0.72em;
+  --lb-hairline: var(--badge-border-width, 1px);
+  --lb-round: var(--badge-radius, 999px);
+  --lb-finish: inset 0 0 0 0 transparent;
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  gap: var(--badge-gap, 0.37em);
+  box-sizing: border-box;
+  max-inline-size: 100%;
+  min-block-size: var(--badge-height, var(--lb-height));
+  padding: 0.28em var(--badge-padding-inline, var(--lb-padding));
+  border-radius: var(--lb-round);
+  background: var(--badge-bg, var(--badge-background, var(--lb-surface)));
+  color: var(--badge-text, var(--lb-ink));
+  box-shadow: var(--badge-shadow, 0 0 0 1px var(--lb-rim), var(--lb-finish));
+  font-size: var(--badge-font-size, var(--lb-font));
+  line-height: 1.25;
+}
+.level-badge[data-size="xs"] {
+  --lb-height: 1.375rem;
+  --lb-font: 0.6875rem;
+  --lb-padding: 0.55em;
+}
+.level-badge[data-size="sm"] {
+  --lb-height: 1.625rem;
+  --lb-font: 0.75rem;
+  --lb-padding: 0.62em;
+}
+.level-badge[data-size="lg"] {
+  --lb-height: 2.5rem;
+  --lb-font: 1rem;
+  --lb-padding: 0.88em;
+}
+
+/* The edge has a hole: a translucent surface never reveals a solid gradient
+   underneath. Older browsers keep a single currentColor border. */
+.level-badge::before,
+.level-badge__finish,
+.level-badge__finish::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.level-badge::before {
+  z-index: 1;
+  border: var(--lb-hairline) solid var(--badge-border-fallback, currentColor);
+}
+@supports (mask-composite: exclude) {
+  .level-badge::before {
+    padding: var(--lb-hairline);
+    border: 0;
+    background: var(--badge-border, var(--lb-edge));
+    mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+  }
+}
+.level-badge__finish {
+  z-index: -1;
+  overflow: hidden;
+}
+.level-badge__finish::after {
+  background: var(--badge-scrim, var(--lb-spec-scrim));
+}
+.level-badge__texture {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+  color: var(--badge-texture-color, currentColor);
+  opacity: var(--badge-texture-opacity, 0.22);
+  /* Keep engraving visible on the rims, with a quiet band behind small type. */
+  mask-image: var(
+    --badge-texture-mask,
+    linear-gradient(to bottom, black, rgb(0 0 0 / 0.13) 34% 66%, black)
+  );
+}
+.level-badge[data-effect="highlight"] {
+  --lb-finish: var(--badge-highlight, inset 0 1px 0 rgb(255 255 255 / 0.7));
+}
+.level-badge[data-effect="matte"] {
+  --lb-finish: var(--badge-matte, inset 0 -2px 4px rgb(29 52 42 / 0.07));
+}
+.level-badge[data-effect="glow"] {
+  --lb-finish: var(--badge-glow, 0 0 6px rgb(122 154 214 / 0.28));
+}
+.level-badge[data-effect="glaze"] {
+  --lb-finish: var(--badge-glaze, inset 0 2px 0 rgb(255 255 255 / 0.23));
+}
+@media (hover: hover) {
+  .level-badge[data-effect="glaze"][data-rank="base"]:hover
+    .level-badge__finish {
+    background: var(
+      --badge-ripple,
+      repeating-radial-gradient(
+        ellipse at 80% 120%,
+        transparent 0 7px,
+        rgb(211 236 255 / 0.1) 8px,
+        transparent 9px 12px
+      )
+    );
+  }
+}
+.level-badge[data-rank="2"] .level-badge__finish {
+  inset: calc(var(--lb-hairline) + 1px);
+  border: var(--badge-silver-line, 1px solid rgb(147 164 182 / 0.65));
+  background: var(
+    --badge-brush,
+    repeating-linear-gradient(
+      168deg,
+      transparent 0 3px,
+      rgb(195 202 214 / 0.08) 3px 4px
+    )
+  );
+}
+.level-badge[data-rank="3"] .level-badge__finish {
+  box-shadow: var(
+    --badge-copper-glow,
+    inset 0 0 0 2px rgb(195 131 91 / 0.22),
+    inset 0 0 6px rgb(224 154 108 / 0.21)
+  );
+}
+.level-badge__glyph {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  position: relative;
+  width: var(--badge-icon-size, 1.32em);
+  height: var(--badge-icon-size, 1.32em);
+  color: var(--badge-icon-color, currentColor);
+  line-height: 1;
+}
+.level-badge__glyph > svg {
+  width: 100%;
+  height: 100%;
+}
+.level-badge__glyph > .level-badge__crown {
+  position: absolute;
+  top: -0.34em;
+  right: -0.08em;
+  width: 0.68em;
+  height: 0.46em;
+  color: var(--badge-crown-color, currentColor);
+}
+.level-badge__level,
+.level-badge__stamp {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--badge-number-font, "Space Grotesk", system-ui, sans-serif);
+}
+.level-badge__level {
+  font-size: 0.8em;
+  font-weight: 650;
+}
+.level-badge__title {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  font-weight: 720;
+  letter-spacing: 0.045em;
+}
+.level-badge__stamp {
+  padding-inline: 0.48em 0.2em;
+  border-inline-start: var(--badge-stamp-rule, 1px solid currentColor);
+  color: var(--badge-stamp-color, currentColor);
+  font-size: 0.76em;
+  letter-spacing: 0.025em;
+  font-weight: 650;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .level-badge[data-motion="slow-sweep"],
+  .level-badge[data-motion="silver-sweep"] {
+    --lb-sweep: var(
+      --badge-sweep,
+      linear-gradient(
+        105deg,
+        transparent 10%,
+        rgb(255 244 190 / 0.22) 48%,
+        transparent 88%
+      )
+    );
+    --lb-period: var(
+      --badge-sweep-duration,
+      var(--badge-motion-duration, var(--lb-spec-duration))
+    );
+  }
+  .level-badge[data-motion="silver-sweep"] {
+    --lb-sweep: var(
+      --badge-silver-sweep,
+      linear-gradient(
+        105deg,
+        transparent 12%,
+        rgb(216 236 255 / 0.25) 50%,
+        transparent 86%
+      )
+    );
+  }
+  .level-badge__motion {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .level-badge:is([data-motion="slow-sweep"], [data-motion="silver-sweep"])
+    .level-badge__motion {
+    background: var(--lb-sweep);
+    animation: lb-edge-sweep var(--lb-period) ease-in-out infinite;
+  }
+  .level-badge[data-motion="breathe"] .level-badge__motion {
+    background: var(
+      --badge-aura,
+      radial-gradient(
+        ellipse at 20% 50%,
+        rgb(185 173 255 / 0.16),
+        transparent 60%
+      )
+    );
+    animation: lb-halo-breathe
+      var(--badge-motion-duration, var(--lb-spec-duration)) ease-in-out infinite;
+  }
+}
+[data-plate-motion="off"] .level-badge__motion {
+  display: none;
+}
+@keyframes lb-edge-sweep {
+  0%,
+  48% {
+    transform: translateX(-100%);
+    opacity: var(--badge-sweep-min-opacity, 0.25);
+  }
+  72% {
+    opacity: var(--badge-sweep-max-opacity, 0.38);
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: var(--badge-sweep-min-opacity, 0.25);
+  }
+}
+@keyframes lb-halo-breathe {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+@media (forced-colors: active) {
+  .level-badge {
+    background: Canvas;
+    color: CanvasText;
+    outline: 1px solid CanvasText;
+  }
+  .level-badge::before,
+  .level-badge__finish {
+    display: none;
+  }
+  .level-badge__stamp {
+    border-inline-start-color: CanvasText;
+  }
+}

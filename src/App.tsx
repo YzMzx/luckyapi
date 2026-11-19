@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router'
 import { Toaster } from '@/components/ui/sonner'
 import Home from './pages/Home'
@@ -43,6 +43,8 @@ import AdminEntVideoReward from './pages/admin/ent/VideoReward'
 import AdminAnnouncements from './pages/admin/Announcements'
 import { PageErrorBoundary } from './components/PageErrorBoundary'
 
+const LevelBadgeShowcase = lazy(() => import('./components/level-badge/LevelBadgeShowcase'))
+
 function AppToaster() {
   const { pathname } = useLocation()
   const [adminTheme, setAdminTheme] = useState<'dark' | 'light'>(() =>
@@ -82,6 +84,11 @@ export default function App() {
         <Route path="/checkin" element={<Checkin />} />
         <Route path="/dashboard" element={<Navigate to="/console" replace />} />
         <Route path="/console" element={<ConsoleOverview />} />
+        <Route path="/badges" element={
+          <Suspense fallback={<p role="status" className="p-8">正在打开徽章图鉴…</p>}>
+            <LevelBadgeShowcase />
+          </Suspense>
+        } />
         <Route path="/console/badges" element={<BadgeHall />} />
         <Route path="/console/keys" element={<ConsoleKeys />} />
         <Route path="/console/billing" element={<ConsoleBilling />} />

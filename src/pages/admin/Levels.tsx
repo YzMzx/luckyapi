@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { LEVEL_STAGES, MAX_LEVEL, getLevelThreshold } from "@contracts/levels";
-import { StagePlate } from "@/components/StagePlate";
+import { LevelBadge } from "@/components/level-badge/LevelBadge";
 import { trpc } from "@/providers/trpc";
 
 export default function AdminLevels() {
@@ -35,7 +35,7 @@ export default function AdminLevels() {
               >
                 <div className="flex flex-wrap items-center gap-3">
                   <h3>
-                    <StagePlate {...stage} />
+                    <LevelBadge level={stage.level} />
                   </h3>
                   <span className="text-sm">
                     Lv.{stage.level} ·{" "}
@@ -43,7 +43,7 @@ export default function AdminLevels() {
                   </span>
                 </div>
                 <ol className="mt-3 grid gap-2 sm:grid-cols-3">
-                  {[1, 2, 3].map(rank => {
+                  {([1, 2, 3] as const).map(rank => {
                     const seat = hall.data.find(
                       item => item.level === stage.level && item.rank === rank
                     );
@@ -52,7 +52,8 @@ export default function AdminLevels() {
                         className="min-w-0 rounded border border-border p-2 text-sm"
                         key={rank}
                       >
-                        <StagePlate {...stage} rank={rank} size="compact" /> ·{" "}
+                        <LevelBadge level={stage.level} rank={rank} size="sm" />{" "}
+                        ·{" "}
                         <span className="break-all">
                           {seat?.userName ?? "虚位以待"}
                         </span>

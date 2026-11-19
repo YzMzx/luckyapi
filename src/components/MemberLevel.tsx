@@ -2,7 +2,8 @@ import { Link } from "react-router";
 import { toast } from "sonner";
 import { LEVEL_STAGES, getLevelThreshold } from "@contracts/levels";
 import { trpc } from "@/providers/trpc";
-import { StagePlate } from "./StagePlate";
+import { LevelBadge } from "./level-badge/LevelBadge";
+import { normalizeBadgeRank, resolveBadgeSpec } from "./level-badge/resolver";
 
 export function MemberLevel() {
   const profile = trpc.levels.profile.useQuery();
@@ -16,11 +17,11 @@ export function MemberLevel() {
   const data = profile.data;
   const next =
     data && LEVEL_STAGES.find(stage => stage.level > data.progress.level);
-  const title =
-    data &&
-    LEVEL_STAGES.filter(stage => stage.level <= data.progress.level).at(-1);
   return (
-    <section className="rounded-xl border border-border bg-[#101d2b] p-5 sm:p-8">
+    <section
+      data-theme="dark"
+      className="rounded-xl border border-border bg-[#101d2b] p-5 sm:p-8"
+    >
       <div className="flex items-center justify-between gap-3">
         <h2 className="t-section">个人等级</h2>
         <Link
@@ -50,12 +51,7 @@ export function MemberLevel() {
       ) : (
         <>
           <div className="mt-5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <strong className="font-num text-4xl text-[#FFB700]">
-              Lv.{data.progress.level}
-            </strong>
-            {title && (
-              <span className="font-bold text-[#fce1b6]">{title.name}</span>
-            )}
+            <LevelBadge level={data.progress.level} size="lg" />
             <span className="text-sm text-muted-foreground">
               累计 {data.progress.totalExp.toLocaleString()} EXP
             </span>
@@ -76,7 +72,7 @@ export function MemberLevel() {
               />
               {next && (
                 <p className="text-xs text-muted-foreground">
-                  距 Lv.{next.level}「{next.name}」还差{" "}
+                  距下一次限定席位授予等级 Lv.{next.level} 还差{" "}
                   {(
                     getLevelThreshold(next.level) - data.progress.totalExp
                   ).toLocaleString()}{" "}
@@ -96,22 +92,22 @@ export function MemberLevel() {
             <div>
               <ul className="mt-3 grid gap-4">
                 {data.badges.map(badge => {
-                  const stage = LEVEL_STAGES.find(
-                    item => item.level === badge.level
-                  );
-                  if (!stage) return null;
+                  const rank = normalizeBadgeRank(badge.rank);
+                  const spec = resolveBadgeSpec({ level: badge.level, rank });
                   const equipped = data.equippedLevel === badge.level;
                   return (
                     <li
                       key={badge.level}
                       className="flex flex-wrap items-center justify-between gap-3 rounded border border-border/70 bg-[#0d1926] p-3"
                     >
-                      <StagePlate {...stage} rank={badge.rank} size="compact" />
+                      <LevelBadge level={badge.level} rank={rank} size="sm" />
                       <button
                         type="button"
                         disabled={equip.isPending}
                         aria-pressed={equipped}
-                        aria-label={"佩戴" + stage.name + "铭牌"}
+                        aria-label={
+                          (equipped ? "摘下" : "佩戴") + spec.title + "铭牌"
+                        }
                         onClick={() =>
                           equip.mutate({ level: equipped ? null : badge.level })
                         }
