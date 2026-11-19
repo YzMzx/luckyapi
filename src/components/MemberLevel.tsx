@@ -2,7 +2,11 @@ import { Link } from "react-router";
 import { toast } from "sonner";
 import { LEVEL_STAGES, getLevelThreshold } from "@contracts/levels";
 import { trpc } from "@/providers/trpc";
-import { StagePlate } from "./StagePlate";
+import {
+  PlateMotionControl,
+  PlateMotionRegion,
+  StagePlate,
+} from "./StagePlate";
 
 export function MemberLevel() {
   const profile = trpc.levels.profile.useQuery();
@@ -85,43 +89,46 @@ export function MemberLevel() {
               )}
             </div>
           )}
-          <h3 className="mt-5 border-t border-border pt-4 text-sm font-bold">
-            我的限定铭牌
-          </h3>
+          <div className="mt-5 flex items-center justify-between gap-3 border-t border-border pt-4">
+            <h3 className="text-sm font-bold">我的限定铭牌</h3>
+            {data.badges.length > 0 && <PlateMotionControl />}
+          </div>
           {data.badges.length === 0 ? (
             <p className="mt-2 text-sm text-muted-foreground">
               暂无铭牌。每个阶段的前三位达成者可获得限定铭牌。
             </p>
           ) : (
-            <ul className="mt-3 flex flex-wrap gap-3">
-              {data.badges.map(badge => {
-                const stage = LEVEL_STAGES.find(
-                  item => item.level === badge.level
-                );
-                if (!stage) return null;
-                const equipped = data.equippedLevel === badge.level;
-                return (
-                  <li
-                    key={badge.level}
-                    className="flex flex-wrap items-center gap-2"
-                  >
-                    <StagePlate {...stage} rank={badge.rank} />
-                    <button
-                      type="button"
-                      disabled={equip.isPending}
-                      aria-pressed={equipped}
-                      aria-label={"佩戴" + stage.name + "铭牌"}
-                      onClick={() =>
-                        equip.mutate({ level: equipped ? null : badge.level })
-                      }
-                      className="rounded border border-border px-3 py-2 text-xs text-[#fce1b6] hover:border-amber-400 disabled:opacity-50"
+            <PlateMotionRegion>
+              <ul className="mt-3 grid gap-4">
+                {data.badges.map(badge => {
+                  const stage = LEVEL_STAGES.find(
+                    item => item.level === badge.level
+                  );
+                  if (!stage) return null;
+                  const equipped = data.equippedLevel === badge.level;
+                  return (
+                    <li
+                      key={badge.level}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded border border-border/70 bg-[#0d1926] p-3"
                     >
-                      {equipped ? "已佩戴 · 摘下" : "佩戴"}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+                      <StagePlate {...stage} rank={badge.rank} size="compact" />
+                      <button
+                        type="button"
+                        disabled={equip.isPending}
+                        aria-pressed={equipped}
+                        aria-label={"佩戴" + stage.name + "铭牌"}
+                        onClick={() =>
+                          equip.mutate({ level: equipped ? null : badge.level })
+                        }
+                        className="rounded border border-border px-3 py-2 text-xs text-[#fce1b6] hover:border-amber-400 disabled:opacity-50"
+                      >
+                        {equipped ? "已佩戴 · 摘下" : "佩戴"}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </PlateMotionRegion>
           )}
         </>
       )}

@@ -1,6 +1,10 @@
 import { Link } from "react-router";
 import { LEVEL_STAGES, MAX_LEVEL, getLevelThreshold } from "@contracts/levels";
-import { StagePlate } from "@/components/StagePlate";
+import {
+  PlateMotionControl,
+  PlateMotionRegion,
+  StagePlate,
+} from "@/components/StagePlate";
 import { trpc } from "@/providers/trpc";
 
 export default function AdminLevels() {
@@ -10,9 +14,15 @@ export default function AdminLevels() {
       <section className="admin-panel p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-bold">限定铭牌席位</h2>
-          <Link to="/admin/users" className="admin-secondary px-3 py-2 text-sm">
-            查看会员等级
-          </Link>
+          <div className="flex items-center gap-2">
+            <PlateMotionControl />
+            <Link
+              to="/admin/users"
+              className="admin-secondary px-3 py-2 text-sm"
+            >
+              查看会员等级
+            </Link>
+          </div>
         </div>
         {hall.isError ? (
           <p role="alert" className="mt-4">
@@ -22,7 +32,7 @@ export default function AdminLevels() {
             </button>
           </p>
         ) : hall.data ? (
-          <div className="mt-4 space-y-3">
+          <PlateMotionRegion className="mt-4 space-y-3">
             {LEVEL_STAGES.map(stage => (
               <section
                 key={stage.level}
@@ -48,7 +58,11 @@ export default function AdminLevels() {
                         key={rank}
                       >
                         {seat ? (
-                          <StagePlate {...stage} rank={seat.rank} />
+                          <StagePlate
+                            {...stage}
+                            rank={seat.rank}
+                            size="compact"
+                          />
                         ) : (
                           <strong>No.{rank}</strong>
                         )}{" "}
@@ -70,7 +84,7 @@ export default function AdminLevels() {
                 </ol>
               </section>
             ))}
-          </div>
+          </PlateMotionRegion>
         ) : (
           <p role="status" className="mt-4">
             正在加载铭牌记录…

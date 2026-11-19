@@ -1,33 +1,486 @@
+/* Celestial instrument collection. Deliberately independent of the old pill badges. */
+.stage-plate {
+  --plate-accent: #ffc879;
+  --plate-highlight: #fff1d2;
+  --plate-deep: #b45b32;
+  --plate-surface: #291c1a;
+  --plate-glow: rgb(244 154 80 / 0.24);
+  --plate-shape: polygon(
+    0 0,
+    calc(100% - 13px) 0,
+    100% 13px,
+    100% 100%,
+    13px 100%,
+    0 calc(100% - 13px)
+  );
+  position: relative;
+  display: inline-block;
+  max-inline-size: 100%;
+  color: var(--plate-highlight);
+  font-family: "Archivo", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  line-height: 1;
+  vertical-align: middle;
+  isolation: isolate;
+  filter: drop-shadow(0 7px 9px rgb(2 7 14 / 0.3));
+}
+.stage-plate-2 {
+  --plate-accent: #9cd9ff;
+  --plate-highlight: #e0f4ff;
+  --plate-deep: #498dcc;
+  --plate-surface: #101f37;
+  --plate-glow: rgb(86 172 255 / 0.23);
+}
+.stage-plate-3 {
+  --plate-accent: #98efd5;
+  --plate-highlight: #ddfff3;
+  --plate-deep: #359b8b;
+  --plate-surface: #0e292a;
+  --plate-glow: rgb(72 210 174 / 0.21);
+}
+.stage-plate-4 {
+  --plate-accent: #d1b8ff;
+  --plate-highlight: #f0e4ff;
+  --plate-deep: #8e61c9;
+  --plate-surface: #211831;
+  --plate-glow: rgb(171 115 255 / 0.24);
+}
+.stage-plate-5 {
+  --plate-accent: #ffe093;
+  --plate-highlight: #fff4d1;
+  --plate-deep: #c18832;
+  --plate-surface: #302416;
+  --plate-glow: rgb(255 192 66 / 0.28);
+}
+.stage-plate-shell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-block-size: 5.25rem;
+  min-inline-size: 15.5rem;
+  padding: 0.65rem 1.25rem 0.65rem 0.7rem;
+  border: 1px solid var(--plate-accent);
+  clip-path: var(--plate-shape);
+  background: linear-gradient(
+    115deg,
+    var(--plate-accent),
+    var(--plate-deep) 18%,
+    var(--plate-surface) 19%,
+    var(--plate-surface) 80%,
+    var(--plate-deep)
+  );
+  background: linear-gradient(
+    in oklab 115deg,
+    var(--plate-accent),
+    var(--plate-deep) 18%,
+    var(--plate-surface) 19%,
+    var(--plate-surface) 80%,
+    var(--plate-deep)
+  );
+}
+.stage-plate-shell::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  z-index: 0;
+  border: 1px solid var(--plate-accent);
+  opacity: 0.35;
+  clip-path: polygon(
+    0 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% 100%,
+    10px 100%,
+    0 calc(100% - 10px)
+  );
+  pointer-events: none;
+}
+.stage-plate-shell::after {
+  content: "";
+  position: absolute;
+  inset-inline: 1rem;
+  inset-block-end: 0.35rem;
+  block-size: 1px;
+  background: linear-gradient(90deg, var(--plate-accent), transparent 65%);
+  opacity: 0.35;
+}
+.stage-plate-backdrop {
+  position: absolute;
+  inset: 4px;
+  z-index: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 18% 50%, var(--plate-glow), transparent 42%),
+    repeating-linear-gradient(
+      120deg,
+      transparent 0 9px,
+      rgb(255 255 255 / 0.025) 9px 10px
+    ),
+    linear-gradient(105deg, var(--plate-surface), #0b1320);
+}
+.stage-plate-backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(
+    var(--plate-accent) 0.55px,
+    transparent 0.8px
+  );
+  background-size: 9px 9px;
+  opacity: 0.13;
+  mask-image: linear-gradient(90deg, #000, transparent 70%);
+}
+.stage-plate-emblem {
+  position: relative;
+  z-index: 2;
+  display: block;
+  flex: 0 0 3.75rem;
+  inline-size: 3.75rem;
+  block-size: 3.75rem;
+  color: var(--plate-accent);
+}
+.stage-emblem {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  overflow: visible;
+}
+.stage-emblem-frame {
+  stroke-width: 1.4;
+}
+.stage-emblem-inner-frame {
+  stroke: currentColor;
+  stroke-width: 0.6;
+  opacity: 0.35;
+}
+.stage-emblem-art {
+  stroke-linecap: round;
+}
+.stage-plate-emblem-halo {
+  position: absolute;
+  inset: -4px;
+  inline-size: calc(100% + 8px);
+  block-size: calc(100% + 8px);
+}
+.stage-plate-emblem-orbit {
+  transform-origin: center;
+}
+.stage-plate-copy {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: 0.22rem;
+  padding-inline-end: 0.3rem;
+}
+.stage-plate-overline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 0.52rem;
+  letter-spacing: 0.18em;
+  opacity: 0.75;
+}
+.stage-plate-overline b {
+  font-size: 0.6rem;
+  font-weight: 500;
+}
+.stage-plate-overline::after {
+  content: "";
+  inline-size: 1.5rem;
+  block-size: 1px;
+  background: currentColor;
+  opacity: 0.5;
+}
+.stage-plate-name {
+  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-size: 1.65rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+  text-shadow: 0 0 18px var(--plate-glow);
+}
+.stage-plate-code {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 0.48rem;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  color: var(--plate-accent);
+}
+.stage-plate-rivet {
+  position: absolute;
+  z-index: 3;
+  inset-inline-end: 0.4rem;
+  inset-block-start: 1rem;
+  inline-size: 3px;
+  block-size: 3px;
+  border-radius: 50%;
+  background: var(--plate-accent);
+  box-shadow: 0 58px var(--plate-accent);
+  opacity: 0.6;
+}
+.stage-plate-limited {
+  padding-block-end: 0.85rem;
+  filter: drop-shadow(0 8px 13px var(--plate-glow));
+}
+.stage-plate-limited .stage-plate-shell {
+  padding-inline-end: 1rem;
+  border-color: var(--plate-highlight);
+}
+.stage-plate-limited .stage-plate-shell::before {
+  opacity: 0.65;
+}
+.stage-plate-effects {
+  position: absolute;
+  inset: 4px;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.stage-plate-aurora {
+  position: absolute;
+  inset: -50%;
+  background: conic-gradient(
+    from 90deg,
+    transparent,
+    var(--plate-glow),
+    transparent 35%
+  );
+  opacity: 0.7;
+}
+.stage-plate-shine {
+  position: absolute;
+  inset-block: -40%;
+  inline-size: 36%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--plate-highlight),
+    transparent
+  );
+  opacity: 0.13;
+  transform: translate3d(-200%, 0, 0) skewX(-18deg);
+}
+.stage-plate-particles {
+  position: absolute;
+  inset: 0;
+}
+.stage-plate-particles i {
+  position: absolute;
+  inline-size: 2px;
+  block-size: 2px;
+  border-radius: 50%;
+  background: var(--plate-highlight);
+  box-shadow: 0 0 5px var(--plate-accent);
+  opacity: 0.25;
+}
+.stage-plate-particles i:nth-child(1) {
+  inset-inline-start: 12%;
+  inset-block-start: 24%;
+}
+.stage-plate-particles i:nth-child(2) {
+  inset-inline-start: 39%;
+  inset-block-start: 76%;
+}
+.stage-plate-particles i:nth-child(3) {
+  inset-inline-start: 58%;
+  inset-block-start: 17%;
+}
+.stage-plate-particles i:nth-child(4) {
+  inset-inline-start: 73%;
+  inset-block-start: 71%;
+}
+.stage-plate-particles i:nth-child(5) {
+  inset-inline-start: 88%;
+  inset-block-start: 32%;
+}
+.stage-plate-particles i:nth-child(6) {
+  inset-inline-start: 30%;
+  inset-block-start: 20%;
+}
+.stage-plate-serial {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  margin-inline-start: auto;
+  padding-inline-start: 0.8rem;
+  border-inline-start: 1px solid var(--plate-accent);
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--plate-accent);
+}
+.stage-plate-serial > span:first-child {
+  grid-column: 1 / -1;
+  margin-block-end: 0.3rem;
+  font-family: "Noto Sans SC", sans-serif;
+  font-size: 0.52rem;
+  letter-spacing: 0.25em;
+}
+.stage-plate-serial strong {
+  font-size: 1.7rem;
+  font-weight: 500;
+  line-height: 1;
+}
+.stage-plate-total {
+  margin-inline-start: 0.15rem;
+  font-size: 0.5rem;
+  opacity: 0.7;
+}
+.stage-plate-edition {
+  position: absolute;
+  inset-inline: 0.7rem 1rem;
+  inset-block-end: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--plate-accent);
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 0.4rem;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+}
+.stage-plate-edition i {
+  inline-size: 3px;
+  block-size: 3px;
+  transform: rotate(45deg);
+  background: var(--plate-accent);
+}
+.stage-plate-compact .stage-plate-shell {
+  min-inline-size: 0;
+  min-block-size: 4.3rem;
+  gap: 0.55rem;
+  padding: 0.5rem 0.75rem 0.5rem 0.55rem;
+}
+.stage-plate-compact .stage-plate-emblem {
+  flex-basis: 3rem;
+  inline-size: 3rem;
+  block-size: 3rem;
+}
+.stage-plate-compact .stage-plate-name {
+  font-size: 1.25rem;
+}
+.stage-plate-compact .stage-plate-code {
+  display: none;
+}
+.stage-plate-compact .stage-plate-serial {
+  padding-inline-start: 0.55rem;
+}
+.stage-plate-compact .stage-plate-serial strong {
+  font-size: 1.35rem;
+}
+.stage-plate-compact .stage-plate-edition {
+  font-size: 0.34rem;
+}
+.plate-motion-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-block-size: 2rem;
+  min-inline-size: 2rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.4rem;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--card) / 0.45);
+  font-size: 0.7rem;
+  transition:
+    color 150ms,
+    border-color 150ms;
+}
+.plate-motion-control:hover {
+  color: var(--plate-highlight, #fce1b6);
+  border-color: #af915f;
+}
+.plate-motion-control:focus-visible {
+  outline: 2px solid #ffb700;
+  outline-offset: 3px;
+}
+.plate-motion-control svg {
+  inline-size: 0.8rem;
+  block-size: 0.8rem;
+}
 @media (prefers-reduced-motion: no-preference) {
-  .stage-plate-limited {
-    position: relative;
-    overflow: hidden;
+  [data-plate-motion="on"] .stage-plate-limited .stage-plate-shine {
+    animation: stage-plate-light-pass 5.5s ease-in-out infinite;
   }
-
-  .stage-plate-limited::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: linear-gradient(
-      110deg,
-      transparent 32%,
-      currentColor 50%,
-      transparent 68%
-    );
-    opacity: 0.24;
-    transform: translateX(100%);
-    animation: stage-plate-sheen 2.2s ease-in-out 2;
+  [data-plate-motion="on"] .stage-plate-limited .stage-plate-aurora {
+    animation: stage-plate-aurora-turn 18s linear infinite;
   }
-
-  @keyframes stage-plate-sheen {
-    0%,
-    15% {
-      transform: translateX(-100%);
-    }
-    85%,
-    100% {
-      transform: translateX(100%);
-    }
+  [data-plate-motion="on"] .stage-plate-limited .stage-plate-emblem-orbit {
+    animation: stage-plate-orbit-turn 12s linear infinite;
+  }
+  [data-plate-motion="on"] .stage-plate-limited .stage-plate-particles i {
+    animation: stage-plate-particle-float 4s ease-in-out infinite alternate;
+  }
+  [data-plate-motion="on"]
+    .stage-plate-limited
+    .stage-plate-particles
+    i:nth-child(2n) {
+    animation-delay: -1.7s;
+    animation-duration: 5.4s;
+  }
+  [data-plate-motion="on"]
+    .stage-plate-limited
+    .stage-plate-particles
+    i:nth-child(3n) {
+    animation-delay: -3s;
+    animation-duration: 6.2s;
+  }
+}
+@keyframes stage-plate-light-pass {
+  0%,
+  18% {
+    transform: translate3d(-200%, 0, 0) skewX(-18deg);
+  }
+  65%,
+  100% {
+    transform: translate3d(600%, 0, 0) skewX(-18deg);
+  }
+}
+@keyframes stage-plate-aurora-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes stage-plate-orbit-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes stage-plate-particle-float {
+  from {
+    transform: translate3d(0, 3px, 0);
+    opacity: 0.15;
+  }
+  to {
+    transform: translate3d(4px, -5px, 0);
+    opacity: 0.75;
+  }
+}
+@media (forced-colors: active) {
+  .stage-plate {
+    filter: none;
+    color: CanvasText;
+  }
+  .stage-plate-shell {
+    background: Canvas;
+    border-color: CanvasText;
+  }
+  .stage-plate-shell::before,
+  .stage-plate-backdrop,
+  .stage-plate-effects {
+    display: none;
+  }
+  .stage-emblem,
+  .stage-emblem-art {
+    color: CanvasText;
+    stroke: CanvasText;
+  }
+  .stage-plate-code,
+  .stage-plate-serial,
+  .stage-plate-edition {
+    color: CanvasText;
   }
 }

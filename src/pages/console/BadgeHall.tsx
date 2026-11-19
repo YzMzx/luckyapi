@@ -1,8 +1,15 @@
+import { Check, CircleDashed, LockKeyhole, Sparkles } from "lucide-react";
 import { LEVEL_STAGES, getLevelThreshold } from "@contracts/levels";
 import { ConsoleLayout } from "@/components/ConsoleLayout";
-import { StagePlate } from "@/components/StagePlate";
+import {
+  PlateMotionControl,
+  PlateMotionRegion,
+  StagePlate,
+} from "@/components/StagePlate";
+import { getStageMeta } from "@/components/stageMeta";
 import { useMe } from "@/hooks/useMe";
 import { trpc } from "@/providers/trpc";
+import "./BadgeHall.css";
 
 const awardDate = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -22,89 +29,178 @@ export default function BadgeHall() {
         加载中…
       </div>
     );
+
   return (
     <ConsoleLayout
       user={user}
       title="铭牌殿堂"
-      desc="每个阶段的前三位达成者获得专属编号铭牌。"
+      desc="穿越五段星海旅程，收藏首批抵达者的限定坐标。"
     >
-      {!hall.data ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          {hall.isError ? (
-            <>
-              席位加载失败。
-              <button
-                type="button"
-                onClick={() => void hall.refetch()}
-                className="underline"
-              >
-                重试
-              </button>
-            </>
-          ) : (
-            "正在加载席位…"
-          )}
-        </p>
-      ) : (
-        <div className="space-y-4">
-          {LEVEL_STAGES.map(stage => (
-            <section
-              key={stage.level}
-              className="rounded-xl border border-border bg-[#101d2b] p-5 sm:p-6"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2>
-                  <StagePlate {...stage} />
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  <strong className="mr-2 font-num text-[#fce1b6]">
-                    Lv.{stage.level}
-                  </strong>
-                  累计 {getLevelThreshold(stage.level).toLocaleString()} EXP
-                </p>
-              </div>
-              <ol className="mt-4 grid gap-2 sm:grid-cols-3">
-                {[1, 2, 3].map(rank => {
-                  const seat = hall.data.find(
-                    entry => entry.level === stage.level && entry.rank === rank
-                  );
-                  return (
-                    <li
-                      key={rank}
-                      className="min-w-0 rounded-lg border border-border bg-[#162638] p-3"
-                    >
-                      {seat ? (
-                        <StagePlate {...stage} rank={seat.rank} />
-                      ) : (
-                        <span className="font-num text-xs text-[#d7b580]">
-                          No.{rank}
-                        </span>
-                      )}
-                      {seat ? (
-                        <>
-                          <p className="mt-1 break-all font-bold">
-                            {seat.userName}
-                          </p>
-                          <time
-                            className="text-xs text-muted-foreground"
-                            dateTime={new Date(seat.awardedAt).toISOString()}
+      <PlateMotionRegion className="badge-hall">
+        <header className="badge-hall-intro">
+          <div>
+            <p className="badge-hall-eyebrow">
+              <Sparkles aria-hidden="true" />
+              THE CELESTIAL ARCHIVE
+            </p>
+            <h2>每一段旅程，都有独特坐标。</h2>
+            <p>五款阶段铭牌，三种首发席位。编号随获得顺序永久铭刻。</p>
+          </div>
+          <div className="badge-hall-legend">
+            <span>
+              <i className="badge-hall-legend-stage" />
+              阶段铭牌
+            </span>
+            <span>
+              <i className="badge-hall-legend-limited" />
+              首发限定
+            </span>
+            <PlateMotionControl />
+          </div>
+        </header>
+
+        {!hall.data ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            {hall.isError ? (
+              <>
+                席位加载失败。{" "}
+                <button
+                  type="button"
+                  onClick={() => void hall.refetch()}
+                  className="underline"
+                >
+                  重试
+                </button>
+              </>
+            ) : (
+              "正在加载星海坐标…"
+            )}
+          </p>
+        ) : (
+          <div className="badge-hall-stages">
+            {LEVEL_STAGES.map((stage, index) => {
+              const meta = getStageMeta(stage.level);
+              const occupied = hall.data.filter(
+                entry => entry.level === stage.level
+              ).length;
+              return (
+                <section
+                  className={`badge-stage badge-stage-${index + 1}`}
+                  key={stage.level}
+                  aria-labelledby={`badge-stage-${stage.level}`}
+                >
+                  <span className="badge-stage-watermark" aria-hidden="true">
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <div className="badge-stage-heading">
+                    <div className="badge-stage-identity">
+                      <span className="badge-stage-index">0{index + 1}</span>
+                      <div>
+                        <p>{meta.code}</p>
+                        <h3 id={`badge-stage-${stage.level}`}>
+                          {stage.name} <span>· Lv.{stage.level}</span>
+                        </h3>
+                        <p className="badge-stage-caption">{meta.caption}</p>
+                      </div>
+                    </div>
+                    <div className="badge-stage-requirement">
+                      <span>UNLOCK AT</span>
+                      <strong>
+                        {getLevelThreshold(stage.level).toLocaleString()}{" "}
+                        <small>EXP</small>
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="badge-stage-showcase">
+                    <div className="badge-stage-standard">
+                      <div className="badge-stage-specimen">
+                        <StagePlate {...stage} />
+                      </div>
+                      <p>
+                        <span>01</span>阶段铭牌{" "}
+                        <small>抵达对应等级即可解锁</small>
+                      </p>
+                    </div>
+                    <div className="badge-stage-limited-specimen">
+                      <div className="badge-stage-specimen">
+                        <StagePlate {...stage} rank={1} />
+                      </div>
+                      <p>
+                        <Sparkles aria-hidden="true" />
+                        <span>02</span>首发限定{" "}
+                        <small>仅每阶段前 3 位 · 动态编号铭刻</small>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="badge-stage-roster">
+                    <div className="badge-stage-roster-title">
+                      <h4>
+                        FIRST ARRIVALS <span>首批抵达者</span>
+                      </h4>
+                      <span>{occupied} / 3 已铭刻</span>
+                    </div>
+                    <ol>
+                      {[1, 2, 3].map(rank => {
+                        const seat = hall.data.find(
+                          entry =>
+                            entry.level === stage.level && entry.rank === rank
+                        );
+                        return (
+                          <li
+                            key={rank}
+                            className={seat ? "is-occupied" : "is-vacant"}
                           >
-                            {awardDate.format(seat.awardedAt)}
-                          </time>
-                        </>
-                      ) : (
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          虚位以待
-                        </p>
-                      )}
-                    </li>
-                  );
-                })}
-              </ol>
-            </section>
-          ))}
-        </div>
-      )}
+                            <span className="badge-seat-rank">
+                              {String(rank).padStart(2, "0")}
+                            </span>
+                            <span
+                              className="badge-seat-icon"
+                              aria-hidden="true"
+                            >
+                              {seat ? (
+                                <Check />
+                              ) : rank <= occupied + 1 ? (
+                                <CircleDashed />
+                              ) : (
+                                <LockKeyhole />
+                              )}
+                            </span>
+                            <div className="badge-seat-owner">
+                              {seat ? (
+                                <>
+                                  <strong>{seat.userName}</strong>
+                                  <time
+                                    dateTime={new Date(
+                                      seat.awardedAt
+                                    ).toISOString()}
+                                  >
+                                    {awardDate.format(seat.awardedAt)}
+                                  </time>
+                                </>
+                              ) : (
+                                <>
+                                  <strong>
+                                    {rank === occupied + 1
+                                      ? "等待下一位抵达者"
+                                      : "席位尚未开放"}
+                                  </strong>
+                                  <span>NO.{rank} · UNCLAIMED</span>
+                                </>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        )}
+      </PlateMotionRegion>
     </ConsoleLayout>
   );
 }
