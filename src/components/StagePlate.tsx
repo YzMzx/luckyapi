@@ -1,6 +1,4 @@
 import { useId } from "react";
-import { Pause, Play } from "lucide-react";
-import { usePlateMotion } from "@/hooks/usePlateMotion";
 import "./StagePlate.css";
 
 import { getStageIndex, getStageMeta } from "./stageMeta";
@@ -219,34 +217,5 @@ export function StagePlate({
         </span>
       )}
     </span>
-  );
-}
-
-export function PlateMotionControl({ className = "" }: { className?: string }) {
-  const { enabled, toggle } = usePlateMotion();
-  return (
-    <button
-      type="button"
-      onClick={toggle}
-      className={`plate-motion-control ${className}`}
-    >
-      {enabled ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
-      {enabled ? "暂停动效" : "播放动效"}
-    </button>
-  );
-}
-
-export function PlateMotionRegion({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  const { enabled } = usePlateMotion();
-  return (
-    <div className={className} data-plate-motion={enabled ? "on" : "off"}>
-      {children}
-    </div>
   );
 }

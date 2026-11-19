@@ -372,59 +372,24 @@
 .stage-plate-compact .stage-plate-edition {
   font-size: 0.34rem;
 }
-.plate-motion-control {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  min-block-size: 2rem;
-  min-inline-size: 2rem;
-  padding: 0.35rem 0.65rem;
-  border: 1px solid hsl(var(--border));
-  border-radius: 0.4rem;
-  color: hsl(var(--muted-foreground));
-  background: hsl(var(--card) / 0.45);
-  font-size: 0.7rem;
-  transition:
-    color 150ms,
-    border-color 150ms;
-}
-.plate-motion-control:hover {
-  color: var(--plate-highlight, #fce1b6);
-  border-color: #af915f;
-}
-.plate-motion-control:focus-visible {
-  outline: 2px solid #ffb700;
-  outline-offset: 3px;
-}
-.plate-motion-control svg {
-  inline-size: 0.8rem;
-  block-size: 0.8rem;
-}
 @media (prefers-reduced-motion: no-preference) {
-  [data-plate-motion="on"] .stage-plate-limited .stage-plate-shine {
+  .stage-plate-limited .stage-plate-shine {
     animation: stage-plate-light-pass 5.5s ease-in-out infinite;
   }
-  [data-plate-motion="on"] .stage-plate-limited .stage-plate-aurora {
+  .stage-plate-limited .stage-plate-aurora {
     animation: stage-plate-aurora-turn 18s linear infinite;
   }
-  [data-plate-motion="on"] .stage-plate-limited .stage-plate-emblem-orbit {
+  .stage-plate-limited .stage-plate-emblem-orbit {
     animation: stage-plate-orbit-turn 12s linear infinite;
   }
-  [data-plate-motion="on"] .stage-plate-limited .stage-plate-particles i {
+  .stage-plate-limited .stage-plate-particles i {
     animation: stage-plate-particle-float 4s ease-in-out infinite alternate;
   }
-  [data-plate-motion="on"]
-    .stage-plate-limited
-    .stage-plate-particles
-    i:nth-child(2n) {
+  .stage-plate-limited .stage-plate-particles i:nth-child(2n) {
     animation-delay: -1.7s;
     animation-duration: 5.4s;
   }
-  [data-plate-motion="on"]
-    .stage-plate-limited
-    .stage-plate-particles
-    i:nth-child(3n) {
+  .stage-plate-limited .stage-plate-particles i:nth-child(3n) {
     animation-delay: -3s;
     animation-duration: 6.2s;
   }

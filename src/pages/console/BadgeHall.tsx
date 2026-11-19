@@ -1,11 +1,7 @@
 import { Check, CircleDashed, LockKeyhole, Sparkles } from "lucide-react";
 import { LEVEL_STAGES, getLevelThreshold } from "@contracts/levels";
 import { ConsoleLayout } from "@/components/ConsoleLayout";
-import {
-  PlateMotionControl,
-  PlateMotionRegion,
-  StagePlate,
-} from "@/components/StagePlate";
+import { StagePlate } from "@/components/StagePlate";
 import { getStageMeta } from "@/components/stageMeta";
 import { useMe } from "@/hooks/useMe";
 import { trpc } from "@/providers/trpc";
@@ -36,7 +32,7 @@ export default function BadgeHall() {
       title="铭牌殿堂"
       desc="穿越五段星海旅程，收藏首批抵达者的限定坐标。"
     >
-      <PlateMotionRegion className="badge-hall">
+      <div className="badge-hall">
         <header className="badge-hall-intro">
           <div>
             <p className="badge-hall-eyebrow">
@@ -55,7 +51,6 @@ export default function BadgeHall() {
               <i className="badge-hall-legend-limited" />
               首发限定
             </span>
-            <PlateMotionControl />
           </div>
         </header>
 
@@ -200,7 +195,7 @@ export default function BadgeHall() {
             })}
           </div>
         )}
-      </PlateMotionRegion>
+      </div>
     </ConsoleLayout>
   );
 }
