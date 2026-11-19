@@ -3,6 +3,10 @@ import { LEVEL_STAGES, getLevelThreshold } from "@contracts/levels";
 import { ConsoleLayout } from "@/components/ConsoleLayout";
 import { StagePlate } from "@/components/StagePlate";
 import { getStageMeta } from "@/components/stageMeta";
+import {
+  PlateMotionControl,
+  PlateMotionRegion,
+} from "@/components/StagePlateMotion";
 import { useMe } from "@/hooks/useMe";
 import { trpc } from "@/providers/trpc";
 import "./BadgeHall.css";
@@ -32,7 +36,7 @@ export default function BadgeHall() {
       title="铭牌殿堂"
       desc="穿越五段星海旅程，收藏首批抵达者的限定坐标。"
     >
-      <div className="badge-hall">
+      <PlateMotionRegion className="badge-hall">
         <header className="badge-hall-intro">
           <div>
             <p className="badge-hall-eyebrow">
@@ -51,6 +55,7 @@ export default function BadgeHall() {
               <i className="badge-hall-legend-limited" />
               首发限定
             </span>
+            <PlateMotionControl />
           </div>
         </header>
 
@@ -124,7 +129,7 @@ export default function BadgeHall() {
                       <p>
                         <Sparkles aria-hidden="true" />
                         <span>02</span>首发限定{" "}
-                        <small>仅每阶段前 3 位 · 动态编号铭刻</small>
+                        <small>{meta.motion} · 仅每阶段前 3 位</small>
                       </p>
                     </div>
                   </div>
@@ -195,7 +200,7 @@ export default function BadgeHall() {
             })}
           </div>
         )}
-      </div>
+      </PlateMotionRegion>
     </ConsoleLayout>
   );
 }

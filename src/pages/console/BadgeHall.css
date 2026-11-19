@@ -225,7 +225,7 @@
 .badge-stage-specimen {
   display: flex;
   align-items: center;
-  min-block-size: 6.7rem;
+  min-block-size: 8.5rem;
 }
 .badge-stage-standard p,
 .badge-stage-limited-specimen > p {
@@ -408,7 +408,7 @@
     padding: 1rem 0;
   }
   .badge-stage-specimen {
-    min-block-size: 6.2rem;
+    min-block-size: 8rem;
   }
   .badge-stage .stage-plate-shell {
     min-inline-size: 0;
