@@ -10,6 +10,7 @@ import Slot from './pages/Slot'
 import Checkin from './pages/Checkin'
 import ConsoleOverview from './pages/console/Overview'
 import BadgeHall from './pages/console/BadgeHall'
+import MyBadges from './pages/console/MyBadges'
 import ConsoleKeys from './pages/console/Keys'
 import ConsoleBilling from './pages/console/Billing'
 import ConsoleFinance from './pages/console/Finance'
@@ -89,6 +90,7 @@ export default function App() {
             <LevelBadgeShowcase />
           </Suspense>
         } />
+        <Route path="/console/my-badges" element={<MyBadges />} />
         <Route path="/console/badges" element={<BadgeHall />} />
         <Route path="/console/keys" element={<ConsoleKeys />} />
         <Route path="/console/billing" element={<ConsoleBilling />} />

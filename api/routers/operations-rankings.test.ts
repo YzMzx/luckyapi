@@ -50,6 +50,18 @@ describe("unified rankings and operational controls", () => {
     await expect(user.finance.transfer({ accountId: other.linuxdoId, amount: 1, requestId: "ops-transfer-2" })).rejects.toThrow("金融权限已被冻结");
     const details = await admin.admin.userDetail({ userId: adminUser.id });
     expect(details.policy.financeFrozen).toBe(true);
+    expect(details.levelProfile).toEqual({ progress: { level: 1, totalExp: 0, currentExp: 0, requiredExp: 80 }, badges: [], equippedLevel: null });
+    await expect(user.admin.userDetail({ userId: other.id })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(admin.admin.userDetail({ userId: 99999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    const { grantExperience, equipLevelBadge } = await import("../queries/levels");
+    const { getLevelThreshold, MAX_LEVEL } = await import("@contracts/levels");
+    const totalExp = getLevelThreshold(MAX_LEVEL);
+    grantExperience(other.id, "admin-detail-test", totalExp);
+    equipLevelBadge(other.id, 10);
+    const otherDetails = await admin.admin.userDetail({ userId: other.id });
+    expect(otherDetails.levelProfile.progress).toEqual({ level: MAX_LEVEL, totalExp, currentExp: 0, requiredExp: null });
+    expect(otherDetails.levelProfile.equippedLevel).toBe(10);
+    expect(otherDetails.levelProfile.badges).toContainEqual({ level: 10, rank: 1 });
     await admin.admin.userPolicy.update({ userId: adminUser.id, allFrozen: true, apiFrozen: false, financeFrozen: false, entertainmentFrozen: false, apiDailySpendLimit: null, apiKeyLimit: null, apiConcurrencyLimit: null, transferDailyLimit: null, lendingDailyLimit: null, outstandingBorrowLimit: null });
     await expect(user.finance.transfer({ accountId: other.linuxdoId, amount: 1, requestId: "ops-transfer-all-frozen" })).rejects.toThrow("金融权限已被冻结");
     const allFrozenDetails = await admin.admin.userDetail({ userId: adminUser.id });

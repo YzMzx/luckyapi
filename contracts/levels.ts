@@ -1,3 +1,9 @@
+export const DAILY_CHECKIN_EXP = 200;
+export const EXP_PER_USD = { income: 100, api_usage: 10 } as const;
+
+/** Public badge shown beside a member’s name. Rank is the limited-edition seat. */
+export type DisplayLevelBadge = { level: number; rank: 1 | 2 | 3 | null };
+
 export const MAX_LEVEL = 51;
 export const LEVEL_STAGES = [
   { level: 10, name: "初星" },

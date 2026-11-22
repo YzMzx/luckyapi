@@ -1803,9 +1803,11 @@ export const adminRouter = createRouter({
       const actualDelta = Math.round((balanceAfter - balanceBefore) * 1_000_000) / 1_000_000;
       if (actualDelta < 0) debitUserBalance(tx, { userId: input.userId, amount: -actualDelta, sourceKind: "adjust", note: "管理员负向调整" });
       else if (actualDelta > 0) tx.update(users).set({ balance: balanceAfter }).where(eq(users.id, input.userId)).run();
+      // The zero floor can also forgive old debt. Only the requested credit earns EXP.
+      const grantUsd = Math.max(0, Math.min(actualDelta, Math.round(input.delta * 1_000_000) / 1_000_000));
       recordTx(tx, input.userId, "adjust", actualDelta, actualDelta === input.delta
         ? "管理员调整"
-        : `管理员调整（请求 ${input.delta}，余额下限 0，实际 ${actualDelta}）`);
+        : `管理员调整（请求 ${input.delta}，余额下限 0，实际 ${actualDelta}）`, grantUsd);
       tx.insert(adminLogs).values({
         action: "调整余额",
         detail: `用户 #${input.userId} 请求 ${input.delta >= 0 ? "+" : ""}${input.delta}；实际 ${actualDelta >= 0 ? "+" : ""}${actualDelta}；余额 $${balanceBefore.toFixed(2)} → $${balanceAfter.toFixed(2)}`,

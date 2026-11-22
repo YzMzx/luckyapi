@@ -41,12 +41,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_group_name_idx ON users (group_name);
 CREATE TABLE IF NOT EXISTS level_profiles (
   user_id INTEGER PRIMARY KEY REFERENCES users(id),
   total_exp INTEGER NOT NULL DEFAULT 0,
+  exp_remainder INTEGER NOT NULL DEFAULT 0,
   equipped_level INTEGER
 );
 CREATE TABLE IF NOT EXISTS experience_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id),
   event_key TEXT NOT NULL,
+  usd_units INTEGER,
   amount INTEGER NOT NULL,
   created_at INTEGER NOT NULL
 );
@@ -686,6 +688,10 @@ CREATE INDEX IF NOT EXISTS tx_user_idx ON transactions (user_id, id);
 
 // 老库自动补列（SQLite ALTER 幂等迁移）
 function migrate(sqlite: InstanceType<typeof Database>) {
+  const profileCols = sqlite.prepare("PRAGMA table_info(level_profiles)").all() as { name: string }[];
+  if (!profileCols.some(c => c.name === "exp_remainder")) sqlite.exec("ALTER TABLE level_profiles ADD COLUMN exp_remainder INTEGER NOT NULL DEFAULT 0");
+  const eventCols = sqlite.prepare("PRAGMA table_info(experience_events)").all() as { name: string }[];
+  if (!eventCols.some(c => c.name === "usd_units")) sqlite.exec("ALTER TABLE experience_events ADD COLUMN usd_units INTEGER");
   const userPolicyCols = (sqlite.prepare("PRAGMA table_info(user_policies)").all() as { name: string }[]).map((c) => c.name);
   if (!userPolicyCols.includes("frozen_api_group_ids")) sqlite.exec("ALTER TABLE user_policies ADD COLUMN frozen_api_group_ids TEXT NOT NULL DEFAULT '[]'");
   if (!userPolicyCols.includes("all_frozen")) sqlite.exec("ALTER TABLE user_policies ADD COLUMN all_frozen INTEGER NOT NULL DEFAULT 0");

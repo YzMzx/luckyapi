@@ -4,6 +4,8 @@ import { TRPCError } from "@trpc/server";
 import { and, asc, desc, eq, gt, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { recordTx } from "../queries/ledger";
+import { awardExperienceInTransaction } from "../queries/levels";
+import { DAILY_CHECKIN_EXP } from "@contracts/levels";
 import {
   announcements,
   checkins,
@@ -365,6 +367,7 @@ export const entertainmentRouter = createRouter({
         totalWon: sql`${users.totalWon} + ${reward}`,
       }).where(eq(users.id, ctx.user.id)).run();
       recordTx(tx, ctx.user.id, "checkin", reward, `每日签到（业务日 ${day.key}）`);
+      awardExperienceInTransaction(tx, ctx.user.id, `signin:${day.key}`, DAILY_CHECKIN_EXP);
       return signinResult(created, false);
     })),
 

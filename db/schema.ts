@@ -36,6 +36,7 @@ export const users = sqliteTable(
 export const levelProfiles = sqliteTable("level_profiles", {
   userId: integer("user_id").primaryKey().references(() => users.id),
   totalExp: integer("total_exp").notNull().default(0),
+  expRemainder: integer("exp_remainder").notNull().default(0),
   equippedLevel: integer("equipped_level"),
 });
 
@@ -43,6 +44,7 @@ export const experienceEvents = sqliteTable("experience_events", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id").notNull().references(() => users.id),
   eventKey: text("event_key").notNull(),
+  usdUnits: integer("usd_units"),
   amount: integer("amount").notNull(),
   createdAt: integer("created_at").notNull(),
 }, (t) => [uniqueIndex("experience_events_user_key").on(t.userId, t.eventKey)]);

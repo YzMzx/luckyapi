@@ -14,6 +14,7 @@ import {
 import { createRouter } from "../middleware";
 import { memberQuery } from "../auth";
 import { getDb } from "../queries/connection";
+import { readDisplayBadges } from "../queries/display-badges";
 import { debitPermanentBalance } from "../queries/credit-grants";
 import { recordTx } from "../queries/ledger";
 import { currentBusinessDay } from "../queries/entertainment-control";
@@ -56,13 +57,14 @@ function activeTemporaryUnits(tx: FinanceTx, userId: number, now: Date) {
   )).get()?.total ?? 0;
 }
 
-function creditLender(tx: FinanceTx, lenderId: number, units: number, loanId: number, note: string) {
+function creditLender(tx: FinanceTx, lenderId: number, principalUnits: number, netInterestUnits: number, loanId: number, note: string) {
+  const units = principalUnits + netInterestUnits;
   if (units <= 0) return rawBalanceUnits(Number(tx.select({ balance: users.balance }).from(users).where(eq(users.id, lenderId)).get()?.balance ?? 0));
   const lender = tx.select({ balance: users.balance }).from(users).where(eq(users.id, lenderId)).get();
   if (!lender) throw new Error("放贷方不存在");
   const after = rawBalanceUnits(Number(lender.balance)) + units;
   tx.update(users).set({ balance: moneyFromUnits(after) }).where(eq(users.id, lenderId)).run();
-  recordTx(tx, lenderId, "loan_repayment", moneyFromUnits(units), `借贷 #${loanId} ${note}`);
+  recordTx(tx, lenderId, "loan_repayment", moneyFromUnits(units), `借贷 #${loanId} ${note}`, moneyFromUnits(netInterestUnits));
   return after;
 }
 
@@ -77,8 +79,7 @@ function applyCollection(tx: FinanceTx, loan: typeof peerLoans.$inferSelect, ava
   // 分次收息时按“累计已收利息应纳税额 - 已纳税额”补差，避免微额拆分规避 10% 利息税。
   const cumulativeTaxUnits = interestTaxUnits(loan.paidInterestUnits + allocation.interestUnits, rules.loanInterestTaxBasisPoints);
   const taxUnits = Math.max(0, cumulativeTaxUnits - loan.taxPaidUnits);
-  const lenderCreditUnits = allocation.principalUnits + allocation.interestUnits - taxUnits;
-  const lenderAfter = creditLender(tx, loan.lenderId, lenderCreditUnits, loan.id, type === "due_collection" ? "到期回收" : "后续回收");
+  const lenderAfter = creditLender(tx, loan.lenderId, allocation.principalUnits, allocation.interestUnits - taxUnits, loan.id, type === "due_collection" ? "到期回收" : "后续回收");
   const fulfilled = allocation.remainingPrincipalUnits + allocation.remainingInterestUnits === 0;
   tx.update(peerLoans).set({
     status: fulfilled ? "fulfilled" : (type === "due_collection" ? "defaulted" : "collecting"),
@@ -383,7 +384,7 @@ export const financeRouter = createRouter({
         const tax = interestTaxUnits(interest, snapshotRules(loan).loanInterestTaxBasisPoints);
         const total = loan.principalUnits + interest;
         debitPermanentBalance(tx, { userId: loan.borrowerId, amount: moneyFromUnits(total), kind: "loan_repayment", note: `借贷 #${loan.id} 提前还款` });
-        const lenderAfter = creditLender(tx, loan.lenderId, loan.principalUnits + interest - tax, loan.id, "提前还款");
+        const lenderAfter = creditLender(tx, loan.lenderId, loan.principalUnits, interest - tax, loan.id, "提前还款");
         const borrowerAfter = rawBalanceUnits(Number(tx.select({ balance: users.balance }).from(users).where(eq(users.id, loan.borrowerId)).get()?.balance ?? 0));
         tx.update(peerLoans).set({ status: "fulfilled", accruedInterestUnits: interest, interestTaxUnits: tax, paidPrincipalUnits: loan.principalUnits, paidInterestUnits: interest, taxPaidUnits: tax, settledAt: now, updatedAt: now }).where(eq(peerLoans.id, loan.id)).run();
         tx.insert(peerLoanLedger).values({ loanId: loan.id, requestId: input.requestId, type: "early_repayment", amountUnits: total, principalUnits: loan.principalUnits, interestUnits: interest, taxUnits: tax, borrowerBalanceAfterUnits: borrowerAfter, lenderBalanceAfterUnits: lenderAfter, note: "按实际经过时间折算月息" }).run();
@@ -435,7 +436,12 @@ export const financeRouter = createRouter({
     const total = db.select({ count: sql<number>`count(*)` }).from(ranked).get()?.count ?? 0;
     const items = db.select().from(ranked).orderBy(asc(ranked.rank)).limit(input.pageSize).offset((input.page - 1) * input.pageSize).all();
     const myRank = db.select().from(ranked).where(eq(ranked.userId, ctx.user.id)).get() ?? null;
-    return { items, total, totalPages: Math.ceil(total / input.pageSize), page: input.page, pageSize: input.pageSize, myRank };
+    const badgeFor = readDisplayBadges(db, [...items.map(row => row.userId), ...(myRank ? [myRank.userId] : [])]);
+    return {
+      items: items.map(row => ({ ...row, badge: badgeFor(row.userId) })),
+      total, totalPages: Math.ceil(total / input.pageSize), page: input.page, pageSize: input.pageSize,
+      myRank: myRank && { ...myRank, badge: badgeFor(myRank.userId) },
+    };
   }),
 
   loanVolumeLeaderboard: memberQuery.input(loanVolumeLeaderboardInput).query(({ input, ctx }) => {
@@ -466,6 +472,11 @@ export const financeRouter = createRouter({
     const total = db.select({ count: sql<number>`count(*)` }).from(ranked).get()?.count ?? 0;
     const items = db.select().from(ranked).orderBy(asc(ranked.rank)).limit(input.pageSize).offset((input.page - 1) * input.pageSize).all();
     const myRank = db.select().from(ranked).where(eq(ranked.userId, ctx.user.id)).get() ?? null;
-    return { items, total, totalPages: Math.ceil(total / input.pageSize), page: input.page, pageSize: input.pageSize, myRank };
+    const badgeFor = readDisplayBadges(db, [...items.map(row => row.userId), ...(myRank ? [myRank.userId] : [])]);
+    return {
+      items: items.map(row => ({ ...row, badge: badgeFor(row.userId) })),
+      total, totalPages: Math.ceil(total / input.pageSize), page: input.page, pageSize: input.pageSize,
+      myRank: myRank && { ...myRank, badge: badgeFor(myRank.userId) },
+    };
   }),
 });

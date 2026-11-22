@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { and, eq, max, sql } from "drizzle-orm";
-import { getLevelProgress, LEVEL_STAGES } from "@contracts/levels";
+import { EXP_PER_USD, getLevelProgress, LEVEL_STAGES } from "@contracts/levels";
+import { MONEY_SCALE, unitsFromMoney } from "@contracts/finance";
 import {
   experienceEvents,
   levelBadges,
@@ -16,6 +17,7 @@ function readProfile(
   const profile = db
     .select({
       totalExp: levelProfiles.totalExp,
+      expRemainder: levelProfiles.expRemainder,
       equippedLevel: levelProfiles.equippedLevel,
     })
     .from(users)
@@ -26,85 +28,142 @@ function readProfile(
   return profile;
 }
 
-export function getLevelProfile(userId: number) {
-  const db = getDb();
-  return db.transaction(tx => {
-    const profile = readProfile(tx, userId);
-    const badges = tx
-      .select({ level: levelBadges.level, rank: levelBadges.rank })
-      .from(levelBadges)
-      .where(eq(levelBadges.userId, userId))
-      .orderBy(levelBadges.level)
-      .all();
-    return {
-      progress: getLevelProgress(profile.totalExp ?? 0),
-      badges,
-      equippedLevel: profile.equippedLevel,
-    };
-  });
+export function readLevelProfile(
+  tx: Pick<ReturnType<typeof getDb>, "select">,
+  userId: number
+) {
+  const profile = readProfile(tx, userId);
+  const badges = tx
+    .select({ level: levelBadges.level, rank: levelBadges.rank })
+    .from(levelBadges)
+    .where(eq(levelBadges.userId, userId))
+    .orderBy(levelBadges.level)
+    .all();
+  return {
+    progress: getLevelProgress(profile.totalExp ?? 0),
+    badges,
+    equippedLevel: profile.equippedLevel,
+  };
 }
 
-/** Trusted server-side entry point. Event keys must be stable across retries and namespaced by source. */
+export function getLevelProfile(userId: number) {
+  return getDb().transaction(tx => readLevelProfile(tx, userId));
+}
+
+type AwardDb = Pick<ReturnType<typeof getDb>, "select" | "insert">;
+
+/** Caller owns the SQLite transaction, including the underlying business event. */
+function applyAward(
+  tx: AwardDb,
+  userId: number,
+  eventKey: string,
+  wholeExp: number,
+  fractionalUnits: number,
+  usdUnits: number | null
+) {
+  if (typeof eventKey !== "string" || !eventKey.trim())
+    throw new Error("缺少经验事件标识");
+  const profile = readProfile(tx, userId);
+  const previous = profile.totalExp ?? 0;
+  // Remainder is in millionths of one EXP, shared across all award sources.
+  const fractions = (profile.expRemainder ?? 0) + fractionalUnits;
+  const amount = wholeExp + Math.floor(fractions / MONEY_SCALE);
+  const expRemainder = fractions % MONEY_SCALE;
+  const now = Date.now();
+  const event = tx
+    .insert(experienceEvents)
+    .values({ userId, eventKey, amount, usdUnits, createdAt: now })
+    .onConflictDoNothing({
+      target: [experienceEvents.userId, experienceEvents.eventKey],
+    })
+    .returning({ id: experienceEvents.id })
+    .get();
+  if (!event) {
+    const existing = tx
+      .select()
+      .from(experienceEvents)
+      .where(
+        and(
+          eq(experienceEvents.userId, userId),
+          eq(experienceEvents.eventKey, eventKey)
+        )
+      )
+      .get();
+    // Replay the input, not the whole EXP computed with today's remainder.
+    if (
+      !existing ||
+      existing.usdUnits !== usdUnits ||
+      (usdUnits === null && existing.amount !== wholeExp)
+    )
+      throw new Error("同一事件的经验值不一致");
+    return false;
+  }
+  const totalExp = previous + amount;
+  if (!Number.isSafeInteger(totalExp)) throw new Error("累计经验超出范围");
+  tx.insert(levelProfiles)
+    .values({ userId, totalExp, expRemainder })
+    .onConflictDoUpdate({
+      target: levelProfiles.userId,
+      set: { totalExp, expRemainder },
+    })
+    .run();
+  const oldLevel = getLevelProgress(previous).level;
+  const newLevel = getLevelProgress(totalExp).level;
+  for (const { level } of LEVEL_STAGES) {
+    if (level <= oldLevel || level > newLevel) continue;
+    const seat = tx
+      .select({ lastRank: max(levelBadges.rank) })
+      .from(levelBadges)
+      .where(eq(levelBadges.level, level))
+      .get();
+    const rank = (seat?.lastRank ?? 0) + 1;
+    if (rank <= 3)
+      tx.insert(levelBadges)
+        .values({ level, rank, userId, eventId: event.id, awardedAt: now })
+        .run();
+  }
+  return true;
+}
+
+export function awardExperienceInTransaction(
+  tx: AwardDb,
+  userId: number,
+  eventKey: string,
+  amount: number
+) {
+  if (!Number.isSafeInteger(amount) || amount <= 0)
+    throw new Error("经验必须为正整数");
+  return applyAward(tx, userId, eventKey, amount, 0, null);
+}
+
+export function awardUsdExperience(
+  tx: AwardDb,
+  userId: number,
+  eventKey: string,
+  usdAmount: number,
+  source: keyof typeof EXP_PER_USD
+) {
+  const units = unitsFromMoney(usdAmount);
+  if (units <= 0) throw new Error("奖励金额必须为正数");
+  const unitsPerExp = MONEY_SCALE / EXP_PER_USD[source];
+  return applyAward(
+    tx,
+    userId,
+    `${source}:${eventKey}`,
+    Math.floor(units / unitsPerExp),
+    (units % unitsPerExp) * EXP_PER_USD[source],
+    units
+  );
+}
+
+/** Standalone entry point for trusted server-side grants. */
 export function grantExperience(
   userId: number,
   eventKey: string,
   amount: number
 ) {
-  if (typeof eventKey !== "string" || !eventKey.trim())
-    throw new Error("缺少经验事件标识");
-  if (!Number.isSafeInteger(amount) || amount <= 0)
-    throw new Error("经验必须为正整数");
-  const db = getDb();
-  return db.transaction(
-    tx => {
-      const previous = readProfile(tx, userId).totalExp ?? 0;
-      const now = Date.now();
-      const event = tx
-        .insert(experienceEvents)
-        .values({ userId, eventKey, amount, createdAt: now })
-        .onConflictDoNothing({
-          target: [experienceEvents.userId, experienceEvents.eventKey],
-        })
-        .returning({ id: experienceEvents.id })
-        .get();
-      if (!event) {
-        const existing = tx
-          .select({ amount: experienceEvents.amount })
-          .from(experienceEvents)
-          .where(
-            and(
-              eq(experienceEvents.userId, userId),
-              eq(experienceEvents.eventKey, eventKey)
-            )
-          )
-          .get();
-        if (existing?.amount !== amount)
-          throw new Error("同一事件的经验值不一致");
-        return false;
-      }
-      const totalExp = previous + amount;
-      if (!Number.isSafeInteger(totalExp)) throw new Error("累计经验超出范围");
-      tx.insert(levelProfiles)
-        .values({ userId, totalExp })
-        .onConflictDoUpdate({ target: levelProfiles.userId, set: { totalExp } })
-        .run();
-      const oldLevel = getLevelProgress(previous).level;
-      const newLevel = getLevelProgress(totalExp).level;
-      for (const { level } of LEVEL_STAGES) {
-        if (level <= oldLevel || level > newLevel) continue;
-        const seat = tx
-          .select({ lastRank: max(levelBadges.rank) })
-          .from(levelBadges)
-          .where(eq(levelBadges.level, level))
-          .get();
-        const rank = (seat?.lastRank ?? 0) + 1;
-        if (rank <= 3)
-          tx.insert(levelBadges)
-            .values({ level, rank, userId, eventId: event.id, awardedAt: now })
-            .run();
-      }
-      return true;
-    },
+  return getDb().transaction(
+    tx => awardExperienceInTransaction(tx, userId, eventKey, amount),
     { behavior: "immediate" }
   );
 }

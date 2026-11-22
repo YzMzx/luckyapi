@@ -6,6 +6,7 @@ import { moneyFromUnits, unitsFromMoney } from "@contracts/finance";
 import { adminQuery, hashAdminPassword } from "../auth";
 import { createRouter } from "../middleware";
 import { getDb } from "../queries/connection";
+import { readLevelProfile } from "../queries/levels";
 import { CONTROL_MODULES, readControlState, readFinanceRules, readUserPolicy, upsertSetting } from "../queries/policies";
 import { SETTING_KEYS } from "../settings";
 import { normalizeConfiguredOrigin } from "../routes/oauth";
@@ -114,7 +115,8 @@ export const userDetailProcedure = adminQuery.input(z.object({ userId: z.number(
   const ledger = tx.select().from(transactions).where(eq(transactions.userId, input.userId)).orderBy(desc(transactions.id)).limit(100).all();
   const transfers = tx.select().from(moneyTransfers).where(sql`${moneyTransfers.senderId} = ${input.userId} OR ${moneyTransfers.recipientId} = ${input.userId}`).orderBy(desc(moneyTransfers.id)).limit(100).all();
   const loans = tx.select().from(peerLoans).where(sql`${peerLoans.lenderId} = ${input.userId} OR ${peerLoans.borrowerId} = ${input.userId}`).orderBy(desc(peerLoans.id)).limit(100).all();
-  return { user, policy: readUserPolicy(tx, input.userId), keys, usage: usage ?? { calls: 0, cost: 0, tokens: 0 }, ledger, transfers, loans };
+  const levelProfile = readLevelProfile(tx, input.userId);
+  return { user, levelProfile, policy: readUserPolicy(tx, input.userId), keys, usage: usage ?? { calls: 0, cost: 0, tokens: 0 }, ledger, transfers, loans };
 }));
 const optionalMoney = z.number().positive().nullable();
 export const updateUserPolicyProcedure = adminQuery.input(z.object({ userId: z.number().int().positive(), frozenApiGroupIds: z.array(z.number().int().positive()).max(200).default([]), allFrozen: z.boolean().optional().default(false), apiFrozen: z.boolean(), financeFrozen: z.boolean(), entertainmentFrozen: z.boolean(), apiDailySpendLimit: optionalMoney, apiKeyLimit: z.number().int().min(1).max(100).nullable(), apiConcurrencyLimit: z.number().int().min(1).max(1000).nullable(), transferDailyLimit: optionalMoney, lendingDailyLimit: optionalMoney, outstandingBorrowLimit: optionalMoney })).mutation(({ input }) => getDb().transaction((tx) => {

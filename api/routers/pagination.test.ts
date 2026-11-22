@@ -72,7 +72,12 @@ describe("server-side pagination", () => {
       totalPages: 1,
       items: [{ id: created[4].id, siteLevel: 1, totalExp: 0 }],
     });
+    await member("page-member-1").levels.equip({ level: 10 });
+    grantExperience(created[0].id, "activity:advance", 3000); // Lv.11 while wearing the Lv.10 badge.
     const userPage = await admin.admin.listUsersPage({ page: 1, pageSize: 20 });
+    expect(userPage.items.find((user) => user.id === created[0].id)).toMatchObject({ siteLevel: 11, totalExp: 10980 });
+    const details = await admin.admin.userDetail({ userId: created[0].id });
+    expect(details.levelProfile).toMatchObject({ progress: { level: 11, totalExp: 10980 }, equippedLevel: 10, badges: [{ level: 10, rank: 1 }] });
     expect(userPage.items.find((user) => user.id === created[1].id)).toMatchObject({ siteLevel: 9, totalExp: 7979 });
     const consumed = new Map(userPage.items.map((user) => [user.id, user.totalConsumed]));
     expect(consumed.get(created[0].id)).toBeCloseTo(0.0468, 8);

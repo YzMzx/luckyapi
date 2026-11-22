@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router";
 import { Trophy, TrendingDown, ChevronLeft, Loader2 } from "lucide-react";
 import { useMe } from "@/hooks/useMe";
 import { SiteNav } from "@/components/SiteNav";
+import { RankingBadge, RankingIdentity } from "@/components/RankingIdentity";
 import { trpc } from "@/providers/trpc";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -44,7 +45,7 @@ export default function ArenaLeaderboard() {
             <Trophy className="mx-auto h-8 w-8 text-[#FFB700]" />
             <p className="mt-4 text-lg font-bold text-[#fce1b6]">决斗风云榜</p>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              {user ? "完成入驻后即可查看榜单并参与排名" : "登录后查看赢家榜 / 逆风榜，只展示群内名称与战绩"}
+              {user ? "完成入驻后即可查看榜单并参与排名" : "登录后查看赢家榜 / 逆风榜，展示群内名称、等级铭牌与战绩"}
             </p>
             {user ? (
               <Link to="/onboarding" className="btn-3d mt-6 inline-block rounded-lg bg-[#FFB700] px-8 py-2.5 text-sm font-black text-[#162638]">
@@ -82,7 +83,7 @@ export default function ArenaLeaderboard() {
           <p className="text-xs font-bold tracking-[0.5em] text-[#af915f]">ARENA HALL OF FAME</p>
           <h1 className="mt-2 text-3xl font-black"><span className="text-outline">决斗风云榜</span></h1>
           <p className="mt-2 text-xs text-muted-foreground">
-            按{data?.metric ?? "税后净收益"}排行 · 只展示群内名称与战绩，不展示余额
+            按{data?.metric ?? "税后净收益"}排行 · 展示群内名称、等级铭牌与战绩，不展示余额
           </p>
         </div>
 
@@ -131,9 +132,10 @@ export default function ArenaLeaderboard() {
                 <AvatarFallback className="bg-[#1d3145] text-xs text-[#fce1b6]">{(mine.groupName ?? "我").slice(0, 1)}</AvatarFallback>
               </Avatar>
               <div>
-                <p className="text-sm font-bold text-[#fce1b6]">
+                <p className="flex flex-wrap items-center gap-2 text-sm font-bold text-[#fce1b6]">
                   我的排名
-                  {mine.isRanked && <span className="font-num ml-2 text-[#FFB700]">#{mine.rank}</span>}
+                  {mine.isRanked && <span className="font-num text-[#FFB700]">#{mine.rank}</span>}
+                  <RankingBadge badge={mine.badge} />
                 </p>
                 <p className="mt-0.5 text-[10px] text-muted-foreground">
                   {mine.isRanked ? `${mine.wins} 胜 ${mine.losses} 负 · 胜率 ${mine.winRatePercent}%` : mine.reason}
@@ -196,7 +198,7 @@ export default function ArenaLeaderboard() {
                               {row.avatarUrl && <AvatarImage src={row.avatarUrl} />}
                               <AvatarFallback className="bg-[#1d3145] text-[10px] text-[#fce1b6]">{row.groupName.slice(0, 1)}</AvatarFallback>
                             </Avatar>
-                            <span className="max-w-[140px] truncate font-bold text-[#fce1b6]">{row.groupName}</span>
+                            <RankingIdentity name={row.groupName} badge={row.badge} className="max-w-44 font-bold text-[#fce1b6]" />
                           </span>
                         </td>
                         <td className="py-2.5 pr-3 text-muted-foreground">

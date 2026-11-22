@@ -3,6 +3,7 @@ import { z } from "zod";
 import { memberQuery } from "../auth";
 import { createRouter } from "../middleware";
 import { getDb } from "../queries/connection";
+import { readDisplayBadges } from "../queries/display-badges";
 import { currentBusinessDay } from "../queries/entertainment-control";
 
 const categories = ["overall", "api", "finance", "entertainment"] as const;
@@ -110,13 +111,15 @@ export const rankingsRouter = createRouter({
       ), ranked AS (
         SELECT *, ROW_NUMBER() OVER (ORDER BY metric ${direction.toUpperCase()}, first_at ASC, user_id ASC) rank FROM aggregated
       ) SELECT * FROM ranked`;
-    const client = getDb().$client;
+    const db = getDb();
+    const client = db.$client;
     const total = Number((client.prepare(`SELECT COUNT(*) total FROM (${rankedSql})`).get(...params) as { total: number }).total);
     const page = Math.min(input.page, Math.max(1, Math.ceil(total / input.pageSize)));
     const rows = client.prepare(`${rankedSql} ORDER BY rank LIMIT ? OFFSET ?`).all(...params, input.pageSize, (page - 1) * input.pageSize) as Array<{ user_id: number; display_name: string; avatar_url: string; metric: number; detail: number; rank: number }>;
     const mine = client.prepare(`${rankedSql} WHERE user_id = ?`).get(...params, ctx.user.id) as typeof rows[number] | undefined;
     const top = client.prepare(`${rankedSql} ORDER BY rank LIMIT 3`).all(...params) as typeof rows;
-    const map = (row: typeof rows[number]) => ({ userId: row.user_id, displayName: row.display_name, avatarUrl: row.avatar_url, metric: Number(row.metric), detail: Number(row.detail), rank: Number(row.rank) });
+    const badgeFor = readDisplayBadges(db, [...rows, ...top, ...(mine ? [mine] : [])].map(row => row.user_id));
+    const map = (row: typeof rows[number]) => ({ userId: row.user_id, badge: badgeFor(row.user_id), displayName: row.display_name, avatarUrl: row.avatar_url, metric: Number(row.metric), detail: Number(row.detail), rank: Number(row.rank) });
     return {
       board: { category: board.category, key: board.key, title: board.title, description: board.description, unit: board.unit, periods: board.periods },
       period, periodStart: range ? new Date(range.start) : null, periodEnd: range ? new Date(range.end) : null,

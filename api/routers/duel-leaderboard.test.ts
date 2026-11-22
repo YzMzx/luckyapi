@@ -121,9 +121,13 @@ describe("duel winner and loser leaderboards", () => {
     await expect(anonymous.duel.leaderboard({ board: "winner", period: "all", game: "all", page: 1 }))
       .rejects.toThrow("请先登录");
 
+    const { grantExperience } = await import("../queries/levels");
+    grantExperience(createdUsers[currentIndex].id, "duel-test", 80);
     const winners = await member.duel.leaderboard({ board: "winner", period: "today", game: "dice", page: 1 });
     expect(winners).toMatchObject({ page: 1, pageSize: 20, total: 22, totalPages: 2, metric: "税后净收益", timezone: "Asia/Shanghai" });
     expect(winners.rows).toHaveLength(20);
+    expect(winners.rows[0].badge).toEqual({ level: 1, rank: null });
+    expect(winners.mine.badge).toEqual({ level: 2, rank: null });
     expect(winners.rows[0]).toMatchObject({ groupName: "榜单玩家02", net: 22, wins: 2, games: 2, rank: 1 });
     expect(winners.rows[1]).toMatchObject({ groupName: "榜单玩家01", net: 22, wins: 1, rank: 2, avatarUrl: null });
     expect(winners.rows.some((row) => row.groupName === createdUsers[currentIndex].groupName)).toBe(false);
@@ -134,6 +138,7 @@ describe("duel winner and loser leaderboards", () => {
     expect(secondPage.rows.map((row) => row.rank)).toEqual([21, 22]);
 
     const losers = await member.duel.leaderboard({ board: "loser", period: "today", game: "dice", page: 1 });
+    expect(losers.mine.badge).toEqual(winners.mine.badge);
     expect(losers.rows.map((row) => [row.groupName, row.value])).toEqual([
       ["榜单玩家23", 5], ["榜单玩家24", 3], ["榜单玩家25", 1],
     ]);

@@ -3,6 +3,7 @@ import { randomInt as secureRandomInt } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { eq, and, or, asc, desc, gt, lt, sql, gte, isNull, isNotNull, ne } from "drizzle-orm";
 import { getDb } from "../queries/connection";
+import { readDisplayBadges } from "../queries/display-badges";
 import { recordTx } from "../queries/ledger";
 import { CREDIT_GRANT_SCALE, createTimedCreditGrant, creditDollarsToUnits, debitUserBalance } from "../queries/credit-grants";
 import {
@@ -397,8 +398,10 @@ export const memberRouter = createRouter({
         .orderBy(desc(permanentAvailable), asc(users.id))
         .limit(pageSize)
         .offset(offset);
+      const badgeFor = readDisplayBadges(db, [...rows.map(row => row.id), ctx.user.id]);
       const rankedRows = rows.map((u, index) => ({
         ...u,
+        badge: badgeFor(u.id),
         rank: (page - 1) * pageSize + index + 1,
       }));
 
@@ -420,6 +423,7 @@ export const memberRouter = createRouter({
           groupName: ctx.user.groupName,
           avatarUrl: ctx.user.avatarUrl,
           balance: mineBalance,
+          badge: badgeFor(ctx.user.id),
           rank: mineRank,
           isRanked: true,
           isOnPage: rankedRows.some((row) => row.id === ctx.user.id),

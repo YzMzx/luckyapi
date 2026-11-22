@@ -1,19 +1,16 @@
 import { Link } from "react-router";
-import { toast } from "sonner";
-import { LEVEL_STAGES, getLevelThreshold } from "@contracts/levels";
+import { OwnedBadgeCollection } from "./OwnedBadgeCollection";
+import {
+  DAILY_CHECKIN_EXP,
+  EXP_PER_USD,
+  LEVEL_STAGES,
+  getLevelThreshold,
+} from "@contracts/levels";
 import { trpc } from "@/providers/trpc";
 import { LevelBadge } from "./level-badge/LevelBadge";
-import { normalizeBadgeRank, resolveBadgeSpec } from "./level-badge/resolver";
 
 export function MemberLevel() {
   const profile = trpc.levels.profile.useQuery();
-  const utils = trpc.useUtils();
-  const equip = trpc.levels.equip.useMutation({
-    onSuccess: async () => {
-      await utils.levels.profile.invalidate();
-    },
-    onError: error => toast.error(error.message),
-  });
   const data = profile.data;
   const next =
     data && LEVEL_STAGES.find(stage => stage.level > data.progress.level);
@@ -81,46 +78,29 @@ export function MemberLevel() {
               )}
             </div>
           )}
+          <h3 className="mt-5 text-sm font-bold">如何获得经验</h3>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+            <li>
+              每日签到获得 {DAILY_CHECKIN_EXP} EXP，签到所得 USD 另计收益经验。
+            </li>
+            <li>每获得 1 USD 净收益，增加 {EXP_PER_USD.income} EXP。</li>
+            <li>
+              API Key 每实际消耗 1 USD，增加 {EXP_PER_USD.api_usage} EXP。
+            </li>
+          </ul>
+          <p className="mt-2 text-xs text-muted-foreground">
+            不足 1 EXP 的部分会保留，凑满后计入等级。
+          </p>
           <div className="mt-5 flex items-center justify-between gap-3 border-t border-border pt-4">
             <h3 className="text-sm font-bold">我的限定铭牌</h3>
+            <Link
+              to="/console/my-badges"
+              className="text-sm underline underline-offset-4"
+            >
+              查看我的铭牌
+            </Link>
           </div>
-          {data.badges.length === 0 ? (
-            <p className="mt-2 text-sm text-muted-foreground">
-              暂无铭牌。每个阶段的前三位达成者可获得限定铭牌。
-            </p>
-          ) : (
-            <div>
-              <ul className="mt-3 grid gap-4">
-                {data.badges.map(badge => {
-                  const rank = normalizeBadgeRank(badge.rank);
-                  const spec = resolveBadgeSpec({ level: badge.level, rank });
-                  const equipped = data.equippedLevel === badge.level;
-                  return (
-                    <li
-                      key={badge.level}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded border border-border/70 bg-[#0d1926] p-3"
-                    >
-                      <LevelBadge level={badge.level} rank={rank} size="sm" />
-                      <button
-                        type="button"
-                        disabled={equip.isPending}
-                        aria-pressed={equipped}
-                        aria-label={
-                          (equipped ? "摘下" : "佩戴") + spec.title + "铭牌"
-                        }
-                        onClick={() =>
-                          equip.mutate({ level: equipped ? null : badge.level })
-                        }
-                        className="rounded border border-border px-3 py-2 text-xs text-[#fce1b6] hover:border-amber-400 disabled:opacity-50"
-                      >
-                        {equipped ? "已佩戴 · 摘下" : "佩戴"}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
+          <OwnedBadgeCollection data={data} />
         </>
       )}
     </section>

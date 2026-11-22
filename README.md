@@ -62,6 +62,12 @@ LuckyAPI 面向需要自建社区 API 服务的个人或小型运营团队。它
 | 榜单中心 | 综合、API、金融、娱乐分类榜单及个人排名 |
 | 管理后台 | 运营开关、用户策略、OAuth、金融规则、审计日志和主题切换 |
 
+### 会员等级经验
+
+每个业务日首次签到固定获得 200 EXP，签到奖励的 USD 也计收益经验。每获得 1 USD 净收益计 100 EXP，每通过 API Key 实际消费 1 USD 计 10 EXP。不足 1 EXP 的部分跨笔累计。例如签到获得 0.25 USD 时，本次共得 225 EXP。
+
+奖励和兑换金额按入账额计算，游戏按单局净赢额计算，放贷按实收税后利息计算。转账、借还本金和退款均不计收益经验。升级后从新发生的签到和流水开始计分，已有经验与铭牌保留。
+
 ## 技术架构
 
 ```text
@@ -156,6 +162,16 @@ docker compose ps
 | `PORT` | 对外映射端口 | 否，默认 `3000` |
 
 应用环境变量示例见 [`.env.example`](.env.example)。
+
+## 协作开发
+
+`develop` 用于集成开发，各成员从该分支创建功能分支，通过 Pull Request 合入 `develop`。每次推送 `develop` 会自动构建并发布 `ghcr.io/yzmzx/luckyapi:develop`，同时发布 `sha-<完整提交 SHA>` 标签用于定位构建。联调部署可设置 `IMAGE_TAG=develop`，再拉取镜像并重启服务。正式版本继续通过 `vX.Y.Z` 标签发布。
+
+```bash
+git fetch origin
+git switch --track origin/develop
+git switch -c feature/your-feature
+```
 
 ## 本地开发
 

@@ -128,13 +128,20 @@ describe("player transfer and peer loans", () => {
     expect(ledgerAudit.total).toBe(4);
     expect(ledgerAudit.items).toHaveLength(2);
 
+    const { grantExperience } = await import("../queries/levels");
+    grantExperience(borrower.id, "finance-test", 797_900);
+    await borrowerCaller.levels.equip({ level: 10 });
     const ranking = await borrowerCaller.finance.creditLeaderboard({ page: 1, pageSize: 1 });
     expect(ranking.items).toHaveLength(1);
+    const equipped = { level: 10, rank: 1 };
+    expect(ranking.myRank?.badge).toEqual(equipped);
+    expect(ranking.items[0].badge).toEqual(ranking.items[0].userId === borrower.id ? equipped : { level: 1, rank: null });
     expect(ranking.total).toBeGreaterThanOrEqual(2);
     expect(ranking.totalPages).toBe(ranking.total);
     expect(ranking.items[0]).not.toHaveProperty("accountId");
     const borrowing = await borrowerCaller.finance.loanVolumeLeaderboard({ side: "borrower", page: 1, pageSize: 20 });
-    expect(borrowing.items.find((row) => row.userId === borrower.id)).toMatchObject({ totalPrincipalUnits: 30_000_000, loanCount: 1 });
+    expect(borrowing.items.find((row) => row.userId === borrower.id)).toMatchObject({ totalPrincipalUnits: 30_000_000, loanCount: 1, badge: equipped });
+    expect(borrowing.myRank?.badge).toEqual(equipped);
     expect(borrowing.items.some((row) => row.userId === recipient.id)).toBe(false);
     expect(borrowing.items[0]).not.toHaveProperty("accountId");
     const lending = await borrowerCaller.finance.loanVolumeLeaderboard({ side: "lender", page: 1, pageSize: 20 });

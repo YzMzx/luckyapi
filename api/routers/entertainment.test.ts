@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 process.env.SQLITE_PATH = join(tmpdir(), `lucky-entertainment-${process.pid}-${Date.now()}.db`);
 
@@ -14,7 +14,7 @@ describe("entertainment transactions and administration", () => {
       import("../router"),
     ]);
     const {
-      users, sessions, adminSessions, draws, dailySignins, checkins,
+      users, sessions, adminSessions, draws, dailySignins, checkins, experienceEvents, signinFund,
       inviteCodes, codeRedemptions, transactions, adminLogs,
     } = schema;
     const db = getDb();
@@ -81,11 +81,28 @@ describe("entertainment transactions and administration", () => {
     expect(await member1.draw.status()).toMatchObject({ participated: true, result: { symbols: firstDraw.symbols } });
 
     const signinRequest = randomUUID();
-    await expect(member1.entertainment.signin({ requestId: signinRequest })).resolves.toMatchObject({ reward: 1, idempotent: false });
+    const signin = await member1.entertainment.signin({ requestId: signinRequest });
+    expect(signin).toMatchObject({ reward: 1, idempotent: false });
     await expect(member1.entertainment.signin({ requestId: signinRequest })).resolves.toMatchObject({ reward: 1, idempotent: true });
     await expect(member1.entertainment.signin({ requestId: randomUUID() })).resolves.toMatchObject({ reward: 1, idempotent: true });
     expect(await db.select().from(dailySignins)).toHaveLength(1);
     expect(await member1.entertainment.signinStatus()).toMatchObject({ done: true, result: { reward: 1 } });
+    const signinKey = `signin:${signin.day}`;
+    const signinEvents = await db.select({ amount: experienceEvents.amount }).from(experienceEvents)
+      .where(and(eq(experienceEvents.userId, createdUsers[0].id), eq(experienceEvents.eventKey, signinKey)));
+    expect(signinEvents).toEqual([{ amount: 200 }]);
+
+    // A conflicting EXP event must roll back the sign-in row, cash reward and funding together.
+    const { grantExperience } = await import("../queries/levels");
+    grantExperience(createdUsers[2].id, signinKey, 1);
+    const readBudget = () => db.select({ units: signinFund.balanceUnits }).from(signinFund).where(eq(signinFund.id, 1)).get();
+    const budgetBefore = readBudget();
+    await expect(member3.entertainment.signin({ requestId: randomUUID() })).rejects.toThrow("同一事件的经验值不一致");
+    expect(await member3.entertainment.signinStatus()).toMatchObject({ done: false });
+    expect(db.select({ balance: users.balance }).from(users).where(eq(users.id, createdUsers[2].id)).get())
+      .toEqual({ balance: createdUsers[2].balance });
+    expect(db.select().from(transactions).where(eq(transactions.userId, createdUsers[2].id)).all()).toEqual([]);
+    expect(readBudget()).toEqual(budgetBefore);
 
     const slot = await member1.member.checkinStatus();
     const firstSpin = await member1.member.checkin({ requestId: randomUUID(), expectedConfigVersion: slot.rules.configVersion, bet: 0.1 });

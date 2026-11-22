@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { Trophy, TrendingDown } from "lucide-react";
+import { RankingIdentity } from "@/components/RankingIdentity";
 import { trpc } from "@/providers/trpc";
 import { cn } from "@/lib/utils";
 
@@ -48,7 +49,7 @@ export function DuelBoard({ enabled }: { enabled: boolean }) {
       {!enabled ? (
         <div className="mt-4 rounded-lg border border-dashed border-[#af915f]/40 px-4 py-8 text-center">
           <p className="text-sm font-bold text-[#fce1b6]">登录后查看风云榜</p>
-          <p className="mt-1.5 text-xs leading-5 text-muted-foreground">赢家榜 / 逆风榜按税后净输赢排行，只展示群内名称与战绩</p>
+          <p className="mt-1.5 text-xs leading-5 text-muted-foreground">赢家榜 / 逆风榜按税后净输赢排行，展示群内名称、等级铭牌与战绩</p>
           <a href={`/api/oauth/login?origin=${encodeURIComponent(window.location.origin)}`} className="mt-4 inline-block text-xs font-bold text-[#FFB700] hover:underline">使用 LINUX DO 登录 →</a>
         </div>
       ) : q.isLoading ? (
@@ -65,12 +66,14 @@ export function DuelBoard({ enabled }: { enabled: boolean }) {
       ) : rows.length ? (
         <ol className="mt-4 space-y-2">
           {rows.map((row) => (
-            <li key={row.rank} className="flex items-center gap-3 rounded-lg border border-border/60 bg-[#101d2b]/70 px-3 py-2.5">
+            <li key={row.rank} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-lg border border-border/60 bg-[#101d2b]/70 px-3 py-2.5">
               <span className="rank-medal font-num flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-black">{row.rank}</span>
-              <span className="min-w-0 flex-1 truncate text-sm font-bold text-[#fce1b6]">{row.groupName}</span>
-              <span className="shrink-0 text-[10px] text-muted-foreground">{row.wins} 胜 {row.losses} 负</span>
-              <span className={cn("font-num shrink-0 text-sm font-black", row.net >= 0 ? "text-[#00B77D]" : "text-[#EF5459]")}>
-                {fmtSigned(row.net)}
+              <RankingIdentity name={row.groupName} badge={row.badge} className="text-sm font-bold text-[#fce1b6]" />
+              <span className="flex flex-col items-end gap-1">
+                <span className="text-[10px] text-muted-foreground">{row.wins} 胜 {row.losses} 负</span>
+                <span className={cn("font-num text-sm font-black", row.net >= 0 ? "text-[#00B77D]" : "text-[#EF5459]")}>
+                  {fmtSigned(row.net)}
+                </span>
               </span>
             </li>
           ))}

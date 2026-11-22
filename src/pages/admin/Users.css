@@ -1,0 +1,23 @@
+.admin-user-list { container-type: inline-size; }
+.admin-user-list :is(th, td) { padding: .75rem 1rem; }
+
+@container (width < 48rem) {
+  .admin-user-list :is(table, tbody) { display: block; }
+  .admin-user-list thead { display: none; }
+  .admin-user-list tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .75rem 1rem;
+    padding: 1rem;
+  }
+  .admin-user-list :is(th, td) { padding: 0; text-align: start; }
+  .admin-user-list :is(th, .admin-user-level, .admin-user-action) { grid-column: 1 / -1; }
+  .admin-user-list td[data-label]::before {
+    display: block;
+    margin-bottom: .25rem;
+    color: hsl(var(--muted-foreground));
+    font-size: .75rem;
+    content: attr(data-label);
+  }
+  .admin-user-action button { width: 100%; }
+}

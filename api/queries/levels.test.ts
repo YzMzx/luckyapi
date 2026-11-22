@@ -10,7 +10,11 @@ let directory: string;
 async function open() {
   vi.resetModules();
   const { getDb } = await import("./connection");
-  return { sqlite: getDb().$client, ...(await import("./levels")) };
+  return {
+    db: getDb(),
+    sqlite: getDb().$client,
+    ...(await import("./levels")),
+  };
 }
 let api: Awaited<ReturnType<typeof open>>;
 beforeEach(async () => {
@@ -60,6 +64,31 @@ it("upgrades a populated pre-level database and preserves awards, deduplication 
   );
   api.equipLevelBadge(1, null);
   expect(api.getLevelProfile(1).equippedLevel).toBeNull();
+});
+
+it("preserves old grants and carries fractional income and usage across restarts and retries", async () => {
+  api.grantExperience(1, "old", 79);
+  api.sqlite.exec(
+    "ALTER TABLE level_profiles DROP COLUMN exp_remainder; ALTER TABLE experience_events DROP COLUMN usd_units"
+  );
+  api.sqlite.close();
+  api = await open();
+  expect(api.grantExperience(1, "old", 79)).toBe(false);
+  const award = (key: string, usd: number, source: "income" | "api_usage") =>
+    api.db.transaction(tx => api.awardUsdExperience(tx, 1, key, usd, source));
+  expect(award("a", 0.006, "income")).toBe(true); // +0.6 EXP
+  expect(api.getLevelProfile(1).progress.totalExp).toBe(79);
+  api.sqlite.close();
+  api = await open();
+  expect(award("a", 0.006, "income")).toBe(false);
+  expect(() => award("a", 0.005, "income")).toThrow("同一事件的经验值不一致");
+  expect(award("b", 0.04, "api_usage")).toBe(true); // +0.4 EXP
+  expect(api.getLevelProfile(1).progress).toMatchObject({
+    totalExp: 80,
+    level: 2,
+  });
+  expect(award("b", 0.04, "api_usage")).toBe(false);
+  expect(api.getLevelProfile(1).progress.totalExp).toBe(80);
 });
 
 it("rolls back a failed award, allows retry, and rejects invalid or overflowing grants", () => {

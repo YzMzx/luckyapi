@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createRouter } from "../middleware";
 import { memberQuery } from "../auth";
 import { getDb } from "../queries/connection";
+import { readDisplayBadges } from "../queries/display-badges";
 import { assertModuleAvailable } from "../queries/policies";
 import { recordTx } from "../queries/ledger";
 import { debitUserBalance, reverseUserBalanceDebit } from "../queries/credit-grants";
@@ -265,11 +266,11 @@ function userBalanceUnits(tx: DuelTx, userId: number) {
   return duelDollarsToUnits(Number(row.balance));
 }
 
-function writeUserMoney(tx: DuelTx, roomId: string, userId: number, units: number, type: string, requestId: string | null, note: string) {
+function writeUserMoney(tx: DuelTx, roomId: string, userId: number, units: number, type: "stake" | "payout", requestId: string | null, note: string, netIncomeUnits = 0) {
   if (!units) return;
   if (units < 0) debitUserBalance(tx, { userId, amount: duelUnitsToDollars(-units), sourceKind: "duel", requestId, note });
   else tx.update(users).set({ balance: sql`${users.balance} + ${duelUnitsToDollars(units)}` }).where(eq(users.id, userId)).run();
-  recordTx(tx, userId, "duel", duelUnitsToDollars(units), note);
+  recordTx(tx, userId, "duel", duelUnitsToDollars(units), note, duelUnitsToDollars(netIncomeUnits));
   const after = userBalanceUnits(tx, userId);
   tx.insert(duelLedger).values({ roomId, userId, requestId, type, amountUnits: units, userBalanceAfterUnits: after, note }).run();
 }
@@ -400,12 +401,13 @@ function settleRoom(
   for (const player of players) {
     const payout = split.payouts.get(player.seat) ?? 0;
     const winner = winnerSeats.includes(player.seat);
-    if (payout > 0) writeUserMoney(tx, roomId, player.userId, payout, "payout", null, `决斗房 ${room.code} 结算入账`);
+    const netUnits = payout - player.stakeUnits;
+    if (payout > 0) writeUserMoney(tx, roomId, player.userId, payout, "payout", null, `决斗房 ${room.code} 结算入账`, Math.max(0, netUnits));
     else if (winner) tx.insert(duelLedger).values({ roomId, userId: player.userId, type: "payout", amountUnits: 0, userBalanceAfterUnits: userBalanceUnits(tx, player.userId), note: `决斗房 ${room.code} 结算入账（平台费后为 0）` }).run();
     tx.update(duelPlayers).set({
       ready: false,
       payoutUnits: payout,
-      settledNetUnits: payout - player.stakeUnits,
+      settledNetUnits: netUnits,
       result: winner ? "win" : "loss",
       status: winner ? "winner" : "lost",
       updatedAt: new Date(),
@@ -1020,7 +1022,10 @@ export const duelRouter = createRouter({
     const total = eligible.length;
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     const page = Math.min(input.page, totalPages);
+    const pageRows = eligible.slice((page - 1) * pageSize, page * pageSize);
+    const badgeFor = readDisplayBadges(tx, [...pageRows.map(row => row.userId), ctx.user.id]);
     const publicRow = (row: typeof eligible[number], rank: number) => ({
+      badge: badgeFor(row.userId),
       rank,
       groupName: row.groupName ?? "未知",
       avatarUrl: publicAvatarUrl(row.avatarUrl),
@@ -1039,6 +1044,7 @@ export const duelRouter = createRouter({
       : {
           rank: null,
           isRanked: false,
+          badge: badgeFor(ctx.user.id),
           groupName: ctx.user.groupName ?? "我",
           avatarUrl: publicAvatarUrl(ctx.user.avatarUrl),
           net: duelUnitsToDollars(myAggregate?.netUnits ?? 0),
@@ -1061,14 +1067,14 @@ export const duelRouter = createRouter({
       game: input.game,
       timezone: bounds.timezone,
       interval: bounds.startMs === null ? null : { start: new Date(bounds.startMs), end: new Date(bounds.endMs!) },
-      rows: eligible.slice((page - 1) * pageSize, page * pageSize).map((row, index) => publicRow(row, (page - 1) * pageSize + index + 1)),
+      rows: pageRows.map((row, index) => publicRow(row, (page - 1) * pageSize + index + 1)),
       mine,
       page,
       pageSize,
       total,
       totalPages,
       metric: input.board === "winner" ? "税后净收益" : "税后净亏损绝对值",
-      privacy: "仅公开群内名称、头像和决斗统计；不返回当前余额、OAuth 标识、用户 ID 或 IP。",
+      privacy: "仅公开群内名称、头像、等级铭牌和决斗统计；不返回当前余额、OAuth 标识、用户 ID 或 IP。",
     };
   })),
 });
