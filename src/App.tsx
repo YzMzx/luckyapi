@@ -8,6 +8,7 @@ import Draw from './pages/Draw'
 import Entertainment from './pages/Entertainment'
 import Perps from './pages/perp/Perps'
 import PerpBoard from './pages/perp/PerpBoard'
+import PerpLiveBoard from './pages/perp/PerpLiveBoard'
 import PerpSquare from './pages/perp/PerpSquare'
 import Slot from './pages/Slot'
 import Checkin from './pages/Checkin'
@@ -87,6 +88,7 @@ export default function App() {
         <Route path="/entertainment" element={<Entertainment />} />
         <Route path="/contracts" element={<Perps />} />
         <Route path="/contracts/square" element={<PerpSquare />} />
+        <Route path="/contracts/live" element={<PerpLiveBoard />} />
         <Route path="/contracts/weeks" element={<PerpBoard />} />
         <Route path="/slot" element={<Slot />} />
         <Route path="/checkin" element={<Checkin />} />

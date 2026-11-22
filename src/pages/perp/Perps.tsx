@@ -299,6 +299,7 @@ export default function Perps() {
             <Link className={button} to="/contracts/square">
               持仓广场 →
             </Link>
+            <Link className={button} to="/contracts/live">实时盈亏榜 →</Link>
             <Link className={button} to="/contracts/weeks">
               历史盈亏周榜 →
             </Link>

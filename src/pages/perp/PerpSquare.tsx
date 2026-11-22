@@ -41,9 +41,10 @@ export default function PerpSquare() {
               秒内有合约页面在前台打开，不代表正在下单。
             </p>
           </div>
-          <Link className={button} to="/contracts">
-            返回合约
-          </Link>
+          <nav aria-label="合约社区" className="flex flex-wrap gap-2">
+            <Link className={button} to="/contracts/live">实时盈亏榜 →</Link>
+            <Link className={button} to="/contracts">返回合约</Link>
+          </nav>
         </header>
         <section className={panel}>
           <div className="flex flex-wrap items-center justify-between gap-3">

@@ -5,6 +5,7 @@ import {
   PERP_KLINE_INTERVALS,
 } from "@contracts/perp-kline";
 import { perpHeartbeat, positionSquare } from "./perpSquare";
+import { perpLiveBoard } from "./perpLiveBoard";
 import { memberQuery } from "../auth";
 import { createRouter } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -125,6 +126,7 @@ async function applyRule<T>(action: () => T | Promise<T>) {
 export const perpRouter = createRouter({
   heartbeat: perpHeartbeat,
   positionSquare,
+  liveBoard: perpLiveBoard,
   symbols: memberQuery.query(() => readPerpConfig(getDb().$client).symbols),
   market: memberQuery
     .input(

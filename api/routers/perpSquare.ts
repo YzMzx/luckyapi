@@ -3,7 +3,7 @@ import { memberQuery } from "../auth";
 import { getDb } from "../queries/connection";
 import { paginationInput, resolvePagination } from "../pagination";
 import { perpSymbolSchema } from "../perp/config";
-import { getPerpQuote } from "../perp/market";
+import { loadPositionQuotes, valueOpenPosition } from "../perp/valuation";
 
 const onlineWindow = 90_000;
 export const perpHeartbeat = memberQuery.mutation(({ ctx }) => {
@@ -89,34 +89,14 @@ export const positionSquare = memberQuery
         total,
       };
     })();
-    // Reuse the shared market cache, once per distinct symbol on this page.
-    const quotes = new Map(
-      await Promise.all(
-        [...new Set(rows.map(r => r.symbol))].map(
-          async symbol =>
-            [symbol, await getPerpQuote(db, symbol).catch(() => null)] as const
-        )
-      )
-    );
+    const quotes = await loadPositionQuotes(db, rows);
     const now = Date.now();
     const items = rows.map(r => {
-      const quote = quotes.get(r.symbol);
-      const mark =
-        quote &&
-        quote.asOf >= r.updatedAt &&
-        quote.asOf <= now &&
-        now - quote.asOf < 5_000
-          ? quote.markUnits
-          : null;
+      const value = valueOpenPosition(r, quotes.get(r.symbol), now);
+      const mark = value?.markPriceUnits ?? null;
+      const pnl = value ? Number(value.pnl) : null;
       const qty = BigInt(r.quantityAtoms),
         entry = BigInt(r.entryUnits);
-      const pnl =
-        mark === null
-          ? null
-          : Number(
-              ((qty * BigInt(mark)) / 100000000n - entry) *
-                (r.side === "long" ? 1n : -1n)
-            );
       return {
         nickname: r.nickname,
         symbol: r.symbol,
