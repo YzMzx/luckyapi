@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Link } from "react-router";
 import { skipToken } from "@tanstack/react-query";
 import { trpc } from "@/providers/trpc";
@@ -29,22 +30,29 @@ import {
   orderLabel,
 } from "./format";
 import { Table } from "./shared";
+import "./PositionCloseDialog.css";
 import { formatExchange } from "./exchangeReview";
 
 type Account = PerpApi["account"];
 function PositionRow({
   p,
+  account,
   select,
 }: {
   p: Account["positions"][number];
+  account: Account;
   select: (s: string) => void;
 }) {
   const symbol = p.symbol;
+  const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const [showCloseForm, setShowCloseForm] = useState(false);
   const q = trpc.perps.market.useQuery(
     { symbol },
     { refetchInterval: 5000, retry: 1 }
   );
-  const quote = q.error ? null : q.data?.quote;
+  const market = q.error ? undefined : q.data;
+  const quote = market?.quote;
   const pnl = quote
     ? (notionalUnits(p.quantityAtoms, quote.markUnits) - p.entryNotionalUnits) *
       (p.side === "long" ? 1 : -1)
@@ -71,6 +79,66 @@ function PositionRow({
       <td>{quote ? sim(quote.markUnits) : "—"}</td>
       <td>{p.liquidationPriceUnits ? sim(p.liquidationPriceUnits) : "—"}</td>
       <td>{pnl !== null ? signed(pnl) : "待估值"}</td>
+      <td>
+        <button
+          type="button"
+          className={button}
+          aria-haspopup="dialog"
+          onClick={() => {
+            dialog.current?.showModal();
+            setShowCloseForm(true);
+          }}
+        >
+          平仓
+          <span className="sr-only">
+            {" "}
+            {symbol} {p.side === "long" ? "多仓" : "空仓"}
+          </span>
+        </button>
+        <dialog
+          ref={dialog}
+          aria-labelledby={titleId}
+          onClose={() => setShowCloseForm(false)}
+          className="perp-close-dialog m-auto max-h-[90dvh] w-[min(28rem,calc(100%-2rem))] overflow-y-auto rounded-2xl border border-border bg-[#101d2b] p-5 text-foreground"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <h2 id={titleId} className="text-xl font-bold">
+              平仓 · {symbol} {p.side === "long" ? "多仓" : "空仓"}
+            </h2>
+            <form method="dialog">
+              <button type="submit" className={button}>
+                关闭
+              </button>
+            </form>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            持仓数量：{coin(p.quantityAtoms)} {baseCoin(symbol)}
+          </p>
+          {showCloseForm &&
+            (market ? (
+              <TradeForm
+                variant="close"
+                market={market}
+                account={account}
+                onSubmitted={message => {
+                  toast.success(message);
+                  dialog.current?.close();
+                }}
+              />
+            ) : q.error ? (
+              <p className="mt-3 text-sm" role="alert">
+                行情读取失败。{" "}
+                <button className={button} onClick={() => void q.refetch()}>
+                  重试
+                </button>
+              </p>
+            ) : (
+              <p className="mt-3 text-sm" role="status">
+                正在读取行情…
+              </p>
+            ))}
+        </dialog>
+      </td>
     </tr>
   );
 }
@@ -373,10 +441,16 @@ export default function Perps() {
                       "标记价格",
                       "预估强平价",
                       "浮动盈亏",
+                      "操作",
                     ]}
                   >
                     {wallet.positions.map(p => (
-                      <PositionRow key={p.symbol} p={p} select={setSelected} />
+                      <PositionRow
+                        key={p.symbol + ":" + p.openedAt}
+                        p={p}
+                        account={wallet}
+                        select={setSelected}
+                      />
                     ))}
                   </Table>
                 ) : (

@@ -20,7 +20,8 @@ import {
   type EstimateInput,
 } from "@contracts/perp-estimate";
 
-type Action = "openLong" | "openShort" | "close";
+type OpenAction = "openLong" | "openShort";
+type Action = OpenAction | "close";
 type Leverage = 1 | 2 | 5;
 type Mode = "market" | "limit" | "conditionalMarket" | "conditionalLimit";
 const modes = {
@@ -52,14 +53,20 @@ const signedSide = (action: Action, short: boolean) =>
 export function TradeForm({
   market,
   account,
+  variant = "open",
+  onSubmitted,
 }: {
   market: PerpApi["market"];
   account: PerpApi["account"];
+  variant?: "open" | "close";
+  onSubmitted?: (message: string) => void;
 }) {
   const pos = account.positions.find(p => p.symbol === market.symbol),
     spec = market.instrument,
     quote = market.quote;
-  const [action, setAction] = useState<Action>(pos ? "close" : "openLong"),
+  const [openAction, setOpenAction] = useState<OpenAction>(
+      pos?.side === "short" ? "openShort" : "openLong"
+    ),
     [mode, setMode] = useState<Mode>("market"),
     [lev, setLev] = useState<Leverage>(1);
   const [qty, setQty] = useState(""),
@@ -82,7 +89,8 @@ export function TradeForm({
     pending = trpc.perps.createPending.useMutation();
   const busy = direct.isPending || pending.isPending;
   const unit = baseCoin(market.symbol),
-    closing = action === "close",
+    closing = variant === "close",
+    action: Action = closing ? "close" : openAction,
     buying = signedSide(action, pos?.side === "short");
   const conditional =
       mode === "conditionalLimit" || mode === "conditionalMarket",
@@ -231,28 +239,30 @@ export function TradeForm({
     sending.current = true;
     try {
       const { terms: t, ...base } = intent;
+      let notice: string;
       if (t.kind === "market") {
         const r = await direct.mutateAsync(base);
-        setMessage(
+        notice =
           orderLabel[r.action] +
-            "成交 " +
-            coin(r.quantityAtoms) +
-            " " +
-            unit +
-            " · 成交价 " +
-            sim(r.priceUnits) +
-            " USDT · 手续费 " +
-            sim(r.feeUnits) +
-            " 模拟金。"
-        );
+          "成交 " +
+          coin(r.quantityAtoms) +
+          " " +
+          unit +
+          " · 成交价 " +
+          sim(r.priceUnits) +
+          " USDT · 手续费 " +
+          sim(r.feeUnits) +
+          " 模拟金。";
       } else {
         const r = await pending.mutateAsync({ ...base, ...t });
-        setMessage("委托 #" + r.id + " 已受理，请在「我的委托」查看最新状态。");
+        notice = "委托 #" + r.id + " 已受理，请在「我的委托」查看最新状态。";
       }
       setIntent(null);
       setCalculated(null);
       setQty("");
       setPct(null);
+      if (onSubmitted) onSubmitted(notice);
+      else setMessage(notice);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "提交失败，请重试。");
     } finally {
@@ -263,8 +273,8 @@ export function TradeForm({
     }
   }
   return (
-    <form onSubmit={confirm} className={panel}>
-      <h2 className="text-xl font-bold">逐仓委托</h2>
+    <form onSubmit={confirm} className={closing ? undefined : panel}>
+      {!closing && <h2 className="text-xl font-bold">逐仓委托</h2>}
       <fieldset disabled={!!intent || busy} className="mt-4 space-y-3">
         <label className="block">
           委托类型
@@ -283,25 +293,26 @@ export function TradeForm({
             ))}
           </select>
         </label>
-        <label className="block">
-          方向
-          <select
-            className={input}
-            value={action}
-            onChange={e => {
-              edit();
-              setAction(e.target.value as Action);
-            }}
-          >
-            <option value="openLong" disabled={!canOpen}>
-              做多
-            </option>
-            <option value="openShort" disabled={!canOpen}>
-              做空
-            </option>
-            <option value="close">平仓</option>
-          </select>
-        </label>
+        {!closing && (
+          <label className="block">
+            方向
+            <select
+              className={input}
+              value={openAction}
+              onChange={e => {
+                edit();
+                setOpenAction(e.target.value as OpenAction);
+              }}
+            >
+              <option value="openLong" disabled={!canOpen}>
+                做多
+              </option>
+              <option value="openShort" disabled={!canOpen}>
+                做空
+              </option>
+            </select>
+          </label>
+        )}
         {!closing && (
           <label className="block">
             杠杆
