@@ -62,11 +62,23 @@ LuckyAPI 面向需要自建社区 API 服务的个人或小型运营团队。它
 | 榜单中心 | 综合、API、金融、娱乐分类榜单及个人排名 |
 | 管理后台 | 运营开关、用户策略、OAuth、金融规则、审计日志和主题切换 |
 
+### Bybit 模拟合约
+
+打开 `/contracts`，可以查看管理员已开放品种的 15 分钟 K 线（默认 **BTCUSDT、ETHUSDT**），使用逐仓保证金模拟做多、做空。LuckyAPI 服务端直接轮询 Bybit 官方公开 REST 行情，部署时只需允许访问 `https://api.bybit.com`，无需 Bybit API Key。成交、持仓和结算均记录在站内。
+
+添加品种：在 `/admin/contracts-settings` 输入完整 Bybit 代码（如 `NVDAUSDT`），查询并核对合约规格后添加、保存。仅支持当前可交易且价格和数量精度受系统支持的 USDT 线性永续合约。单个品种可设置为「仅平仓」，用于暂停新增仓位；有持仓时不可移除。
+
+部署前请在服务器测试公开行情：`curl "https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT"`。正常响应应为 HTTP 200 且 `retCode` 为 0。如果接口限流、行情过期或返回地区限制（HTTP 403），系统不会用缓存价成交；已缓存的 K 线仅用于查看。
+
+管理员可在 `/admin/contracts-settings` 设置每 1 单位永久余额可换入的模拟金数量，以及兑回手续费百分比。默认 1:1,000、兑回手续费 5%。同一比例双向使用；保存新规则不改变玩家持有的模拟金数量，但会改变已有模拟金今后可兑回的余额。玩家预览至确认期间如遇规则变化，必须重新预览。例：比例设为 1:2,000、兑回费率 2.5% 时，兑回 20,000 模拟金折合 10 单位余额，扣 0.25 后实际到账 9.75。
+
+周榜以北京时间每周一 00:00 的账户权益为快照，00:05 起归档上一周的盈利榜和亏损榜。管理员可在 `/admin/contracts-settings` 选择开放品种，控制换入和交易开关，并设置每用户及全平台的开仓名义价值上限。首次配置使用[环境变量示例](.env.example)中的两个开关作为默认值。
+
 ### 会员等级经验
 
 每个业务日首次签到固定获得 200 EXP，签到奖励的 USD 也计收益经验。每获得 1 USD 净收益计 100 EXP，每通过 API Key 实际消费 1 USD 计 10 EXP。不足 1 EXP 的部分跨笔累计。例如签到获得 0.25 USD 时，本次共得 225 EXP。
 
-奖励和兑换金额按入账额计算，游戏按单局净赢额计算，放贷按实收税后利息计算。转账、借还本金和退款均不计收益经验。升级后从新发生的签到和流水开始计分，已有经验与铭牌保留。
+合约模拟金兑回先用扣除当次手续费后的实际到账额抵扣该用户尚未收回的换入本金，只有超出的净盈利计收益经验。分批兑回继续抵扣同一笔本金；未兑回的浮盈不计经验。其他奖励和兑换码按入账额计算，游戏按单局净赢额计算，放贷按实收税后利息计算。转账、借还本金和退款均不计收益经验。常规升级默认从新发生的签到和流水开始计分。管理员可以主动[用本站原 SQLite 补算，在副本中按历史首达时间重排限定铭牌](docs/level-backfill.md)。
 
 ## 技术架构
 
@@ -120,6 +132,8 @@ services:
       LINUXDO_CLIENT_ID: ${LINUXDO_CLIENT_ID:-}
       LINUXDO_CLIENT_SECRET: ${LINUXDO_CLIENT_SECRET:-}
       LINUXDO_PRIMARY_ORIGIN: ${LINUXDO_PRIMARY_ORIGIN:-}
+      PERP_DEPOSITS_ENABLED: ${PERP_DEPOSITS_ENABLED:-1}
+      PERP_TRADING_ENABLED: ${PERP_TRADING_ENABLED:-1}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
       interval: 30s

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router'
 import { Toaster } from '@/components/ui/sonner'
 import Home from './pages/Home'
@@ -6,6 +6,8 @@ import Announcement from './pages/Announcement'
 import Onboarding from './pages/Onboarding'
 import Draw from './pages/Draw'
 import Entertainment from './pages/Entertainment'
+import Perps from './pages/perp/Perps'
+import PerpBoard from './pages/perp/PerpBoard'
 import Slot from './pages/Slot'
 import Checkin from './pages/Checkin'
 import ConsoleOverview from './pages/console/Overview'
@@ -35,6 +37,7 @@ import AdminLogs from './pages/admin/Logs'
 import AdminControl from './pages/admin/Control'
 import AdminAuthSettings from './pages/admin/AuthSettings'
 import AdminFinanceSettings from './pages/admin/FinanceSettings'
+import AdminPerpSettings from './pages/admin/PerpSettings'
 import AdminMonitoring from './pages/admin/Monitoring'
 import AdminEntOverview from './pages/admin/ent/Overview'
 import AdminEntDraw from './pages/admin/ent/Draw'
@@ -44,7 +47,6 @@ import AdminEntVideoReward from './pages/admin/ent/VideoReward'
 import AdminAnnouncements from './pages/admin/Announcements'
 import { PageErrorBoundary } from './components/PageErrorBoundary'
 
-const LevelBadgeShowcase = lazy(() => import('./components/level-badge/LevelBadgeShowcase'))
 
 function AppToaster() {
   const { pathname } = useLocation()
@@ -81,15 +83,13 @@ export default function App() {
         <Route path="/announcements/:id" element={<Announcement />} />
         <Route path="/draw" element={<Draw />} />
         <Route path="/entertainment" element={<Entertainment />} />
+        <Route path="/contracts" element={<Perps />} />
+        <Route path="/contracts/weeks" element={<PerpBoard />} />
         <Route path="/slot" element={<Slot />} />
         <Route path="/checkin" element={<Checkin />} />
         <Route path="/dashboard" element={<Navigate to="/console" replace />} />
         <Route path="/console" element={<ConsoleOverview />} />
-        <Route path="/badges" element={
-          <Suspense fallback={<p role="status" className="p-8">正在打开徽章图鉴…</p>}>
-            <LevelBadgeShowcase />
-          </Suspense>
-        } />
+        <Route path="/badges" element={<Navigate to="/console/badges" replace />} />
         <Route path="/console/my-badges" element={<MyBadges />} />
         <Route path="/console/badges" element={<BadgeHall />} />
         <Route path="/console/keys" element={<ConsoleKeys />} />
@@ -113,6 +113,7 @@ export default function App() {
           <Route path="control" element={<AdminControl />} />
           <Route path="auth-settings" element={<AdminAuthSettings />} />
           <Route path="finance-settings" element={<AdminFinanceSettings />} />
+          <Route path="contracts-settings" element={<AdminPerpSettings />} />
           <Route path="monitoring" element={<AdminMonitoring />} />
           <Route path="groups" element={<AdminGroups />} />
           <Route path="invites" element={<AdminInvites />} />

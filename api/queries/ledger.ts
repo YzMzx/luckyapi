@@ -6,7 +6,7 @@ import { awardUsdExperience } from "./levels";
 
 type LedgerDb = Pick<BetterSQLite3Database<typeof schema>, "select" | "insert">;
 
-export type TxKind = "draw" | "checkin" | "video_reward" | "redeem" | "credit_expire" | "adjust" | "usage" | "duel" | "permanent_debit" | "transfer_out" | "transfer_in" | "loan_disbursement" | "loan_due" | "loan_repayment" | "loan_offer_refund";
+export type TxKind = "draw" | "checkin" | "video_reward" | "redeem" | "credit_expire" | "adjust" | "usage" | "duel" | "permanent_debit" | "transfer_out" | "transfer_in" | "loan_disbursement" | "loan_due" | "loan_repayment" | "loan_offer_refund" | "perp_exchange_in" | "perp_exchange_out";
 
 /**
  * 记账：读取变动后的余额并写入流水。
@@ -35,6 +35,7 @@ export function recordTx(db: LedgerDb, userId: number, kind: TxKind, amount: num
       break;
     case "duel":
     case "loan_repayment":
+    case "perp_exchange_out":
     case "adjust":
       if (netIncomeUsd > 0) awardUsdExperience(db, userId, eventKey, netIncomeUsd, "income");
       break;

@@ -31,7 +31,10 @@ if (env.isProduction) {
   const { getDb } = await import("./queries/connection");
   const { expireAllCreditGrants } = await import("./queries/credit-grants");
   const { processLoanIncomeInterception } = await import("./routers/financeRouter");
+  const { refreshPerpMaintenance } = await import("./perp/maintenance");
   const db = getDb();
+  void refreshPerpMaintenance(db.$client);
+  setInterval(() => { void refreshPerpMaintenance(db.$client); }, 5_000).unref();
   db.transaction((tx) => expireAllCreditGrants(tx));
   processLoanIncomeInterception();
   setInterval(() => {

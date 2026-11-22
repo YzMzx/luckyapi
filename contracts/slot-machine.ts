@@ -1,4 +1,4 @@
-export const SLOT_CONFIG_VERSION = "daily-slot-v2-2505";
+export const SLOT_CONFIG_VERSION = "daily-slot-v3-3000";
 export const SLOT_PROBABILITY_SCALE = 1_000_000;
 export const SLOT_MULTIPLIER_SCALE = 10_000;
 export const SLOT_MONEY_SCALE = 100;
@@ -38,6 +38,21 @@ export type SlotRulesDefinition = {
 
 export const DEFAULT_SLOT_RULES: SlotRulesDefinition = {
   version: SLOT_CONFIG_VERSION,
+  name: "日常 30% / RTP 92%",
+  minBetUnits: SLOT_MIN_BET_UNITS,
+  maxBetUnits: SLOT_MAX_BET_UNITS,
+  tiers: [
+    { id: "small-1", symbol: "cherry", name: "小奖", probabilityPpm: 220_000, multiplierBasisPoints: 20_000 },
+    { id: "small-2", symbol: "lemon", name: "小奖", probabilityPpm: 50_000, multiplierBasisPoints: 30_000 },
+    { id: "medium", symbol: "bell", name: "中奖", probabilityPpm: 25_000, multiplierBasisPoints: 60_000 },
+    { id: "large", symbol: "diamond", name: "大奖", probabilityPpm: 4_000, multiplierBasisPoints: 200_000 },
+    { id: "jackpot", symbol: "seven", name: "头奖", probabilityPpm: 1_000, multiplierBasisPoints: 1_000_000 },
+  ],
+};
+
+/** Historical v2 rules; fractional payouts still round to the nearest cent per winning tier. */
+export const V2_SLOT_RULES: SlotRulesDefinition = {
+  version: "daily-slot-v2-2505",
   name: "日常 25.05% / RTP 92%",
   minBetUnits: SLOT_MIN_BET_UNITS,
   maxBetUnits: SLOT_MAX_BET_UNITS,
@@ -75,28 +90,18 @@ export function multiplyMoneyUnits(amountUnits: number, multiplierBasisPoints: n
   return Number((BigInt(amountUnits) * BigInt(multiplierBasisPoints) + BigInt(SLOT_MULTIPLIER_SCALE / 2)) / BigInt(SLOT_MULTIPLIER_SCALE));
 }
 
-export function slotMetrics(rules: SlotRulesDefinition) {
-  const winRatePpm = rules.tiers.reduce((sum, tier) => sum + tier.probabilityPpm, 0);
-  const weighted = rules.tiers.reduce(
-    (sum, tier) => sum + BigInt(tier.probabilityPpm) * BigInt(tier.multiplierBasisPoints),
-    0n,
-  );
-  const rtpPpm = Number((weighted + BigInt(SLOT_MULTIPLIER_SCALE / 2)) / BigInt(SLOT_MULTIPLIER_SCALE));
-  const maxMultiplierBasisPoints = Math.max(...rules.tiers.map((tier) => tier.multiplierBasisPoints));
-  const maxGrossPayoutUnits = multiplyMoneyUnits(rules.maxBetUnits, maxMultiplierBasisPoints);
-  const maxNetLiabilityUnits = Math.max(0, maxGrossPayoutUnits - rules.maxBetUnits);
-  return {
-    winRatePpm,
-    lossRatePpm: SLOT_PROBABILITY_SCALE - winRatePpm,
-    rtpPpm,
-    houseEdgePpm: SLOT_PROBABILITY_SCALE - rtpPpm,
-    maxMultiplierBasisPoints,
-    maxGrossPayoutUnits,
-    maxNetLiabilityUnits,
-  };
+function assertValidBet(rules: SlotRulesDefinition, betUnits: number) {
+  if (!Number.isSafeInteger(betUnits) || betUnits < rules.minBetUnits || betUnits > rules.maxBetUnits) throw new Error("下注金额超出配置范围");
 }
 
-export function validateSlotRules(rules: SlotRulesDefinition) {
+type TicketRow = {
+  endExclusive: number;
+  tier: SlotPrizeTier | null;
+  grossPayoutUnits: number;
+};
+
+/** Build local, contiguous integer ticket ranges for this stake, including the losing range. */
+function compileSlot(rules: SlotRulesDefinition, betUnits: number) {
   if (!rules.version.trim() || rules.version.length > 96) throw new Error("配置版本无效");
   if (!rules.name.trim() || rules.name.length > 96) throw new Error("配置名称无效");
   if (!isIntegerInRange(rules.minBetUnits, 1, 1_000_000)) throw new Error("最小下注无效");
@@ -104,6 +109,9 @@ export function validateSlotRules(rules: SlotRulesDefinition) {
   if (rules.tiers.length < 1 || rules.tiers.length > SLOT_SYMBOL_DEFINITIONS.length) throw new Error("奖项档位数量无效");
   const ids = new Set<string>();
   const symbols = new Set<string>();
+  assertValidBet(rules, betUnits);
+  const rows: TicketRow[] = [];
+  let winRatePpm = 0;
   for (const tier of rules.tiers) {
     if (!tier.id.trim() || ids.has(tier.id)) throw new Error("奖项编号必须唯一");
     if (!symbolIds.has(tier.symbol) || symbols.has(tier.symbol)) throw new Error("奖项符号必须有效且唯一");
@@ -112,11 +120,50 @@ export function validateSlotRules(rules: SlotRulesDefinition) {
     if (!isIntegerInRange(tier.multiplierBasisPoints, SLOT_MULTIPLIER_SCALE + 1, 10_000_000)) throw new Error("中奖倍率必须大于 1 倍");
     ids.add(tier.id);
     symbols.add(tier.symbol);
+    winRatePpm += tier.probabilityPpm;
+    rows.push({ endExclusive: winRatePpm, tier, grossPayoutUnits: multiplyMoneyUnits(betUnits, tier.multiplierBasisPoints) });
   }
-  const metrics = slotMetrics(rules);
-  if (metrics.winRatePpm <= 0 || metrics.winRatePpm >= SLOT_PROBABILITY_SCALE) throw new Error("总中奖率必须大于 0 且小于 100%");
-  if (metrics.rtpPpm <= 0 || metrics.rtpPpm >= SLOT_PROBABILITY_SCALE) throw new Error("RTP 必须大于 0 且小于 100%");
-  return metrics;
+  if (winRatePpm <= 0 || winRatePpm >= SLOT_PROBABILITY_SCALE) throw new Error("总中奖率必须大于 0 且小于 100%");
+  rows.push({ endExclusive: SLOT_PROBABILITY_SCALE, tier: null, grossPayoutUnits: 0 });
+
+  let start = 0;
+  let nominal = 0n;
+  let settled = 0n;
+  let maxMultiplierBasisPoints = 0;
+  for (const row of rows) {
+    const tickets = BigInt(row.endExclusive - start);
+    const multiplier = row.tier?.multiplierBasisPoints ?? 0;
+    nominal += tickets * BigInt(multiplier);
+    settled += tickets * BigInt(row.grossPayoutUnits);
+    maxMultiplierBasisPoints = Math.max(maxMultiplierBasisPoints, multiplier);
+    start = row.endExclusive;
+  }
+  const ratioRounded = (n: bigint, d: number) => Number((n + BigInt(Math.floor(d / 2))) / BigInt(d));
+  const rtpPpm = ratioRounded(nominal, SLOT_MULTIPLIER_SCALE);
+  if (rtpPpm <= 0 || rtpPpm >= SLOT_PROBABILITY_SCALE) throw new Error("RTP 必须大于 0 且小于 100%");
+  const maxGrossPayoutUnits = multiplyMoneyUnits(rules.maxBetUnits, maxMultiplierBasisPoints);
+  return {
+    rows,
+    metrics: {
+      winRatePpm, lossRatePpm: SLOT_PROBABILITY_SCALE - winRatePpm, rtpPpm, houseEdgePpm: SLOT_PROBABILITY_SCALE - rtpPpm,
+      maxMultiplierBasisPoints, maxGrossPayoutUnits, maxNetLiabilityUnits: Math.max(0, maxGrossPayoutUnits - rules.maxBetUnits),
+    },
+    // Both totals fit within safe integer range under the validated config bounds.
+    settlement: { numerator: Number(settled), denominator: betUnits * SLOT_PROBABILITY_SCALE, rtpPpm: ratioRounded(settled, betUnits) },
+  };
+}
+
+/** Exact RTP after per-win rounding is numerator / denominator; rtpPpm is rounded for display. */
+export function settlementRtpForBet(rules: SlotRulesDefinition, betUnits: number) {
+  return compileSlot(rules, betUnits).settlement;
+}
+
+export function slotMetrics(rules: SlotRulesDefinition) {
+  return compileSlot(rules, rules.maxBetUnits).metrics;
+}
+
+export function validateSlotRules(rules: SlotRulesDefinition) {
+  return slotMetrics(rules);
 }
 
 export function parseSlotRules(serialized: string): SlotRulesDefinition {
@@ -190,20 +237,16 @@ const randomLosingSymbols = (randomInt: (maxExclusive: number) => number): SlotS
 };
 
 export function spinSlot(randomInt: (maxExclusive: number) => number, rules: SlotRulesDefinition, betUnits: number) {
-  validateSlotRules(rules);
-  if (!Number.isSafeInteger(betUnits) || betUnits < rules.minBetUnits || betUnits > rules.maxBetUnits) throw new Error("下注金额超出配置范围");
+  const { rows, settlement } = compileSlot(rules, betUnits);
   const roll = randomInt(SLOT_PROBABILITY_SCALE);
-  let cursor = 0;
-  const tier = rules.tiers.find((candidate) => {
-    cursor += candidate.probabilityPpm;
-    return roll < cursor;
-  });
+  if (!isIntegerInRange(roll, 0, SLOT_PROBABILITY_SCALE - 1)) throw new Error("无效的开奖抽值");
+  const { tier, grossPayoutUnits } = rows.find((row) => roll < row.endExclusive)!;
   const multiplierBasisPoints = tier?.multiplierBasisPoints ?? 0;
-  const grossPayoutUnits = tier ? multiplyMoneyUnits(betUnits, multiplierBasisPoints) : 0;
   const symbols: SlotSymbols = tier
     ? [tier.symbol, tier.symbol, tier.symbol]
     : randomLosingSymbols(randomInt);
   return {
+    settlementRtpPpm: settlement.rtpPpm,
     prizeTierId: tier?.id ?? "loss",
     prizeTierName: tier?.name ?? "未中奖",
     symbols,

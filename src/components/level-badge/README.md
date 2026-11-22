@@ -1,6 +1,6 @@
 # 自然意境等级徽章 v2
 
-本模块使用 nature-level-badge-kit-v2 的 React 组件、SVG 图标、主题配置及样式。运行开发服务器后打开 `/badges` 查看六个阶段的全部 24 款徽章。
+本模块使用 nature-level-badge-kit-v2 的 React 组件、SVG 图标、主题配置及样式。登录后打开 `/console/badges`，可在铭牌殿堂查看等级铭牌与首达席位。
 
 ```tsx
 import { LevelBadge } from "@/components/level-badge";

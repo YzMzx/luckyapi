@@ -29,7 +29,7 @@ const GAMES = [
 
 /** 服务入口 */
 const SERVICES = [
-  { to: "/badges", icon: Leaf, title: "等级徽章图鉴", desc: "浏览六个自然阶段与前三名限定称号" },
+  { to: "/console/badges", icon: Leaf, title: "铭牌殿堂", desc: "查看各类铭牌的获取方式与获授成员" },
   { to: "/models", icon: Boxes, title: "模型广场", desc: "全部上游模型与定价一览" },
   { to: "/console", icon: KeyRound, title: "API 控制台", desc: "生成 Key、查看调用与额度流水" },
   { to: "/leaderboard", icon: Trophy, title: "榜单中心", desc: "额度、决斗战绩与借贷信用排行" },

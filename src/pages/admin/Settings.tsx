@@ -11,8 +11,8 @@ import {
   moneyUnitsToDollars,
   multiplierToBasisPoints,
   probabilityPercentToPpm,
-  SLOT_MULTIPLIER_SCALE,
-  SLOT_PROBABILITY_SCALE,
+  dollarsStringToMoneyUnits,
+  validateSlotRules,
   SLOT_SYMBOL_DEFINITIONS,
 } from "@contracts/slot-machine";
 
@@ -47,27 +47,21 @@ const initialSlotDraft: SlotDraft = {
 const symbolMap = new Map(SLOT_SYMBOL_DEFINITIONS.map((symbol) => [symbol.id, symbol]));
 
 function inspectSlotDraft(draft: SlotDraft) {
-  const parsed = draft.tiers.map((tier) => ({
-    name: tier.name,
-    probabilityPpm: probabilityPercentToPpm(tier.probabilityPercent),
-    multiplierBasisPoints: multiplierToBasisPoints(tier.multiplier),
-  }));
-  const malformed = parsed.find((tier) => tier.probabilityPpm === null || tier.multiplierBasisPoints === null);
-  if (malformed) return { winRatePpm: null, rtpPpm: null, error: `奖项「${malformed.name || "未命名"}」的概率或倍率格式无效` };
-  const tiers = parsed as Array<{ name: string; probabilityPpm: number; multiplierBasisPoints: number }>;
-  const invalidProbability = tiers.find((tier) => tier.probabilityPpm <= 0 || tier.probabilityPpm >= SLOT_PROBABILITY_SCALE);
-  if (invalidProbability) return { winRatePpm: null, rtpPpm: null, error: `奖项「${invalidProbability.name || "未命名"}」的概率必须在 0～100% 之间` };
-  const invalidMultiplier = tiers.find((tier) => tier.multiplierBasisPoints <= SLOT_MULTIPLIER_SCALE);
-  if (invalidMultiplier) return { winRatePpm: null, rtpPpm: null, error: `奖项「${invalidMultiplier.name || "未命名"}」的返还倍率必须大于 1` };
-  const winRatePpm = tiers.reduce((sum, tier) => sum + tier.probabilityPpm, 0);
-  const weighted = tiers.reduce((sum, tier) => sum + BigInt(tier.probabilityPpm) * BigInt(tier.multiplierBasisPoints), 0n);
-  const rtpPpm = Number((weighted + BigInt(SLOT_MULTIPLIER_SCALE / 2)) / BigInt(SLOT_MULTIPLIER_SCALE));
-  const error = winRatePpm >= SLOT_PROBABILITY_SCALE
-    ? "总中奖率必须小于 100%"
-    : rtpPpm >= SLOT_PROBABILITY_SCALE
-      ? "理论 RTP 必须小于 100%，请降低某些奖项的概率或返还倍率"
-      : null;
-  return { winRatePpm, rtpPpm, error };
+  try {
+    const minBetUnits = dollarsStringToMoneyUnits(draft.minBet);
+    const maxBetUnits = dollarsStringToMoneyUnits(draft.maxBet);
+    if (minBetUnits === null || maxBetUnits === null) throw new Error("下注金额最多保留两位小数");
+    const tiers = draft.tiers.map((tier) => {
+      const probabilityPpm = probabilityPercentToPpm(tier.probabilityPercent);
+      const multiplierBasisPoints = multiplierToBasisPoints(tier.multiplier);
+      if (probabilityPpm === null || multiplierBasisPoints === null) throw new Error(`奖项「${tier.name || "未命名"}」的概率或倍率格式无效`);
+      return { ...tier, probabilityPpm, multiplierBasisPoints };
+    });
+    const { winRatePpm, rtpPpm } = validateSlotRules({ version: "preview", name: draft.name, minBetUnits, maxBetUnits, tiers });
+    return { winRatePpm, rtpPpm, error: null };
+  } catch (error) {
+    return { winRatePpm: null, rtpPpm: null, error: error instanceof Error ? error.message : "奖表无效" };
+  }
 }
 
 export default function Settings() {
@@ -207,13 +201,13 @@ export default function Settings() {
             RTP {slotDraftEstimate.rtpPpm === null ? "—" : `${formatProbabilityPercent(slotDraftEstimate.rtpPpm)}%`}
           </p>
           <p className={`mt-1 leading-5 ${slotDraftEstimate.error ? "text-[#EF5459]" : "text-muted-foreground"}`}>
-            {slotDraftEstimate.error ?? "参数满足 RTP 风险边界，可继续请求服务端精确预览。"} RTP = 各奖项“概率 × 返还倍率”之和，配置名称中的数字不会改变实际 RTP。
+            {slotDraftEstimate.error ?? "参数满足 RTP 风险边界，可继续请求服务端精确预览。"} 此处为奖表标称 RTP（含本金）。实际按分结算；分数倍率可能使不同注额的 RTP 略有差异。
           </p>
         </div>
         <div className="mt-4 flex flex-wrap gap-3">
           <button type="button" onClick={() => previewSlot.mutate(slotDraft)} disabled={!!slotDraftEstimate.error || previewSlot.isPending} className="rounded-lg border border-accent px-5 py-2 text-xs font-bold text-accent disabled:cursor-not-allowed disabled:opacity-40">服务端精确预览</button>
           <button type="button" onClick={() => createDraft.mutate(slotDraft)} disabled={!!slotDraftEstimate.error || createDraft.isPending} className="btn-3d rounded-lg bg-accent px-5 py-2 text-xs font-black text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40">保存不可变草稿</button>
-          <button type="button" onClick={() => { setSlotDraft(initialSlotDraft); setSlotPreview(null); }} className="rounded-lg border border-border px-5 py-2 text-xs font-bold text-muted-foreground hover:text-foreground">恢复默认 25.05% / RTP 92%</button>
+          <button type="button" onClick={() => { setSlotDraft(initialSlotDraft); setSlotPreview(null); }} className="rounded-lg border border-border px-5 py-2 text-xs font-bold text-muted-foreground hover:text-foreground">恢复默认：{DEFAULT_SLOT_RULES.name}</button>
         </div>
         {slotPreview && <div className="mt-4 grid gap-2 rounded-lg border border-[#00B77D]/50 bg-[#102820] p-4 text-xs sm:grid-cols-4"><span>中奖率 <b>{slotPreview.winRatePercent}%</b></span><span>RTP <b>{slotPreview.rtpPercent}%</b></span><span>平台优势 <b>{slotPreview.houseEdgePercent}%</b></span><span>最大净负债 <b>${slotPreview.maxNetLiability.toFixed(2)}</b></span></div>}
       </section>

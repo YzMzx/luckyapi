@@ -16,8 +16,6 @@ import { memberQuery, randomToken, sha256 } from "../auth";
 import { getSetting, SETTING_KEYS } from "../settings";
 import { groupNameSchema } from "@contracts/group-name";
 import {
-  SLOT_MAX_BET,
-  SLOT_MIN_BET,
   dollarsToMoneyUnits,
   moneyUnitsToDollars,
   serializeSlotRules,
@@ -579,8 +577,8 @@ export const memberRouter = createRouter({
     .input(z.object({
       requestId: z.string().uuid(),
       expectedConfigVersion: z.string().min(1).max(96),
-      bet: z.number().min(SLOT_MIN_BET).max(SLOT_MAX_BET)
-        .refine((value) => Math.round(value * 100) === value * 100, "下注金额最多保留两位小数"),
+      // The active rules and current fund capacity determine the range inside the transaction.
+      bet: z.number().positive("下注金额必须大于 0").multipleOf(0.01, "下注金额最多保留两位小数"),
     }))
     .mutation(async ({ ctx, input }) => {
     assertModuleAvailable(getDb(), "slot", ctx.user.id);
@@ -655,7 +653,7 @@ export const memberRouter = createRouter({
           prizeTier: outcome.prizeTierId,
           rulesSnapshot: serializeSlotRules(state.rules),
           winRatePpm: state.metrics.winRatePpm,
-          rtpPpm: state.metrics.rtpPpm,
+          rtpPpm: outcome.settlementRtpPpm,
           fundBeforeUnits,
           fundAfterUnits,
           promotionId: state.promotion?.id ?? null,

@@ -4,7 +4,7 @@ import { trpc } from "@/providers/trpc";
 import { useMe } from "@/hooks/useMe";
 import { SiteNav } from "@/components/SiteNav";
 import { SlotMachine, type SlotResult } from "@/components/SlotMachine";
-import { SLOT_DEFAULT_BET } from "@contracts/slot-machine";
+import { SLOT_DEFAULT_BET, dollarsToMoneyUnits, settlementRtpForBet, formatProbabilityPercent } from "@contracts/slot-machine";
 
 /** 数字滚动动画 */
 function CountUp({ value }: { value: number }) {
@@ -98,6 +98,10 @@ export default function Slot() {
   };
 
   const liveRules = checkinStatus.data?.rules;
+  const betRtp = liveRules && slotBet >= liveRules.minBet && slotBet <= liveRules.maxBet
+    ? settlementRtpForBet({ version: liveRules.configVersion, name: liveRules.configName,
+        minBetUnits: dollarsToMoneyUnits(liveRules.minBet), maxBetUnits: dollarsToMoneyUnits(liveRules.maxBet), tiers: liveRules.tiers,
+      }, dollarsToMoneyUnits(slotBet)).rtpPpm : null;
   const betOptions = liveRules
     ? Array.from(new Set([0.1, 0.5, 1, 2, 5, liveRules.allowedMaxBet]))
       .filter((amount) => amount >= liveRules.minBet && amount <= liveRules.allowedMaxBet)
@@ -213,8 +217,7 @@ export default function Slot() {
               <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
                 服务端先按公开奖项档位开奖，再返回对应三连视觉；其他组合返还 0。理论中奖率
                 {" "}{((liveRules?.theoretical.winRate ?? 0) * 100).toFixed(2)}%，
-                RTP {((liveRules?.theoretical.rtp ?? 0) * 100).toFixed(2)}%，平台优势
-                {" "}{((liveRules?.theoretical.houseEdge ?? 0) * 100).toFixed(2)}%。
+                当前下注 ${slotBet.toFixed(2)} 的理论返奖率（含本金，按分结算）：{betRtp === null ? "—" : `${formatProbabilityPercent(betRtp)}%`}。
               </p>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { perpSettingsAdminRouter } from "./adminPerpSettings";
 import { randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { eq, desc, sql, and, or, isNotNull, isNull, inArray, lt, lte, gt, gte, like } from "drizzle-orm";
@@ -202,6 +203,7 @@ export const adminRouter = createRouter({
   control: controlAdminRouter,
   authSettings: authSettingsAdminRouter,
   financeSettings: financeSettingsAdminRouter,
+  perpSettings: perpSettingsAdminRouter,
   monitoring: monitoringAdminRouter,
   userDetail: userDetailProcedure,
   userPolicy: createRouter({ update: updateUserPolicyProcedure }),

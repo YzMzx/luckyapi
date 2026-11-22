@@ -7,6 +7,7 @@ import { duelRouter } from "./routers/duelRouter";
 import { entertainmentRouter } from "./routers/entertainmentRouter";
 import { financeRouter } from "./routers/financeRouter";
 import { rankingsRouter } from "./routers/rankingsRouter";
+import { perpRouter } from "./routers/perpRouter";
 import { levelsRouter } from "./routers/levelsRouter";
 
 export const appRouter = createRouter({
@@ -18,6 +19,7 @@ export const appRouter = createRouter({
   duel: duelRouter,
   entertainment: entertainmentRouter,
   finance: financeRouter,
+  perps: perpRouter,
   rankings: rankingsRouter,
   admin: adminRouter,
 });

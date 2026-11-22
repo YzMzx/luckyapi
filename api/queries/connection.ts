@@ -3,11 +3,16 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as schema from "@db/schema";
+import { PERP_ENGINE_SCHEMA } from "../perp/schema";
+import { PERP_MARKET_SCHEMA } from "../perp/market";
+import { PERP_WEEKLY_SCHEMA } from "../perp/weekly";
+import { LEVEL_SCHEMA, migrateLevelColumns } from "./level-schema";
 import { creditDollarsToUnits, creditUnitsToDollars, reverseUserBalanceDebit } from "./credit-grants";
 import { recordTx } from "./ledger";
 import {
   DEFAULT_SLOT_RULES,
   LEGACY_SLOT_RULES,
+  V2_SLOT_RULES,
   serializeSlotRules,
   slotMetrics,
 } from "@contracts/slot-machine";
@@ -15,9 +20,6 @@ import {
 // 原生模块不能被打包，运行时从 node_modules 加载
 const require_ = nodeCreateRequire(import.meta.url);
 const Database = require_("better-sqlite3") as typeof import("better-sqlite3");
-
-// SQLite 数据库文件路径（Docker 里挂卷到 /app/data 即可持久化）
-const DB_PATH = resolve(process.env.SQLITE_PATH || "data/luckydraw.db");
 
 // 启动自动建表（IF NOT EXISTS，幂等）
 const DDL = `
@@ -38,30 +40,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE UNIQUE INDEX IF NOT EXISTS users_linuxdo_id_idx ON users (linuxdo_id);
 CREATE UNIQUE INDEX IF NOT EXISTS users_group_name_idx ON users (group_name);
 
-CREATE TABLE IF NOT EXISTS level_profiles (
-  user_id INTEGER PRIMARY KEY REFERENCES users(id),
-  total_exp INTEGER NOT NULL DEFAULT 0,
-  exp_remainder INTEGER NOT NULL DEFAULT 0,
-  equipped_level INTEGER
-);
-CREATE TABLE IF NOT EXISTS experience_events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL REFERENCES users(id),
-  event_key TEXT NOT NULL,
-  usd_units INTEGER,
-  amount INTEGER NOT NULL,
-  created_at INTEGER NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS experience_events_user_key ON experience_events(user_id, event_key);
-CREATE TABLE IF NOT EXISTS level_badges (
-  level INTEGER NOT NULL,
-  rank INTEGER NOT NULL CONSTRAINT level_badges_rank CHECK(rank BETWEEN 1 AND 3),
-  user_id INTEGER NOT NULL REFERENCES users(id),
-  event_id INTEGER NOT NULL REFERENCES experience_events(id),
-  awarded_at INTEGER NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS level_badges_seat ON level_badges(level, rank);
-CREATE UNIQUE INDEX IF NOT EXISTS level_badges_owner ON level_badges(user_id, level);
+${LEVEL_SCHEMA}
 
 CREATE TABLE IF NOT EXISTS pending_users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -688,10 +667,7 @@ CREATE INDEX IF NOT EXISTS tx_user_idx ON transactions (user_id, id);
 
 // 老库自动补列（SQLite ALTER 幂等迁移）
 function migrate(sqlite: InstanceType<typeof Database>) {
-  const profileCols = sqlite.prepare("PRAGMA table_info(level_profiles)").all() as { name: string }[];
-  if (!profileCols.some(c => c.name === "exp_remainder")) sqlite.exec("ALTER TABLE level_profiles ADD COLUMN exp_remainder INTEGER NOT NULL DEFAULT 0");
-  const eventCols = sqlite.prepare("PRAGMA table_info(experience_events)").all() as { name: string }[];
-  if (!eventCols.some(c => c.name === "usd_units")) sqlite.exec("ALTER TABLE experience_events ADD COLUMN usd_units INTEGER");
+  migrateLevelColumns(sqlite);
   const userPolicyCols = (sqlite.prepare("PRAGMA table_info(user_policies)").all() as { name: string }[]).map((c) => c.name);
   if (!userPolicyCols.includes("frozen_api_group_ids")) sqlite.exec("ALTER TABLE user_policies ADD COLUMN frozen_api_group_ids TEXT NOT NULL DEFAULT '[]'");
   if (!userPolicyCols.includes("all_frozen")) sqlite.exec("ALTER TABLE user_policies ADD COLUMN all_frozen INTEGER NOT NULL DEFAULT 0");
@@ -987,6 +963,14 @@ function seedSlotControl(sqlite: InstanceType<typeof Database>) {
   };
 
   insertConfig(LEGACY_SLOT_RULES, "retired");
+  // Only auto-upgrade the original, unmodified system preset on first v3 seed.
+  // An operator's custom table (or deliberate later reactivation) must survive restarts.
+  const v3Exists = sqlite.prepare("SELECT 1 FROM slot_configs WHERE version = ?").get(DEFAULT_SLOT_RULES.version);
+  if (!v3Exists) {
+    sqlite.prepare("UPDATE slot_configs SET status = 'retired' WHERE mode = 'base' AND status = 'active' AND version = ? AND rules_json = ?")
+      .run(V2_SLOT_RULES.version, serializeSlotRules(V2_SLOT_RULES));
+  }
+  insertConfig(V2_SLOT_RULES, "retired");
   const active = sqlite.prepare("SELECT id FROM slot_configs WHERE mode = 'base' AND status = 'active' LIMIT 1").get();
   insertConfig(DEFAULT_SLOT_RULES, active ? "retired" : "active");
   if (!active) {
@@ -1109,15 +1093,23 @@ let instance: ReturnType<typeof drizzle<typeof schema>> | undefined;
 
 export function getDb() {
   if (!instance) {
-    mkdirSync(dirname(DB_PATH), { recursive: true });
-    const sqlite = new Database(DB_PATH);
+    // Resolve at connection time so isolated jobs can select their database before opening it.
+    const target = process.env.SQLITE_PATH || "data/luckydraw.db";
+    const dbPath = target === ":memory:" ? target : resolve(target);
+    if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
+    const sqlite = new Database(dbPath);
     try {
       sqlite.pragma("journal_mode = WAL");
       sqlite.pragma("busy_timeout = 5000");
       sqlite.exec(DDL);
+      sqlite.transaction(() => {
+        sqlite.exec(PERP_ENGINE_SCHEMA);
+        sqlite.exec(PERP_MARKET_SCHEMA);
+        sqlite.exec(PERP_WEEKLY_SCHEMA);
+      })();
       migrate(sqlite);
       refundLegacyEscrows(sqlite);
-      seedSlotControl(sqlite);
+      sqlite.transaction(() => seedSlotControl(sqlite)).immediate();
       seedEntertainmentControl(sqlite);
       seedDuelControl(sqlite);
       // 预置默认分组

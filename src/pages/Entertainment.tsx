@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { Gift, Cherry, CalendarCheck, Swords, ArrowRight, Loader2 } from "lucide-react";
+import { Gift, Cherry, CalendarCheck, Swords, ChartCandlestick, ArrowRight, Loader2 } from "lucide-react";
 import { useMe } from "@/hooks/useMe";
 import { SiteNav } from "@/components/SiteNav";
 import { trpc } from "@/providers/trpc";
@@ -47,6 +47,13 @@ export default function Entertainment() {
         : s.signin.canSignin
           ? { text: "可签到", cls: "border-[#00B77D]/50 bg-[#00B77D]/10 text-[#00B77D]" }
           : { text: s.signin.unavailableReason === "budget_exhausted" ? "预算暂时耗尽" : "暂未开放", cls: "border-border bg-white/5 text-muted-foreground" },
+    },
+    {
+      to: "/contracts",
+      icon: ChartCandlestick,
+      title: "模拟合约",
+      desc: "Bybit 永续合约、逐仓多空与历史盈亏周榜",
+      status: null,
     },
     {
       to: "/arena",

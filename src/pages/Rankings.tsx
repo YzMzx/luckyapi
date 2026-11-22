@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { Activity, Banknote, Braces, Crown, Gamepad2, Medal, RefreshCw, Trophy } from "lucide-react";
 import { SiteNav } from "@/components/SiteNav";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -56,6 +56,7 @@ export default function Rankings() {
   return <div className="min-h-screen"><SiteNav user={user} /><main className="mx-auto max-w-7xl px-4 py-8 sm:py-10">
     <header className="rounded-3xl border border-[#af915f]/30 bg-gradient-to-br from-[#101d2b] via-[#14273a] to-[#101d2b] p-6 shadow-2xl sm:p-8">
       <div className="flex flex-wrap items-start justify-between gap-5"><div><p className="text-xs font-bold tracking-[.38em] text-[#af915f]">LUCKY HALL OF FAME</p><h1 className="mt-3 flex items-center gap-3 text-3xl font-black sm:text-4xl"><Trophy className="h-9 w-9 text-[#FFB700]" /><span className="text-outline">榜单中心</span></h1><p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">综合、API、金融和娱乐数据统一排名。所有数值均来自真实成功或已结算记录。</p></div>{ranking.data && <div className="rounded-xl border border-border bg-black/10 px-4 py-3 text-right text-xs text-muted-foreground"><p>更新时间</p><p className="mt-1 font-num text-[#fce1b6]">{new Date(ranking.data.updatedAt).toLocaleString("zh-CN")}</p></div>}</div>
+      <Link to="/contracts/weeks" className="mt-4 inline-flex rounded-lg border border-border px-4 py-2 text-sm font-bold text-[#FFB700]">查看合约盈亏周榜 →</Link>
       <div className="mt-7 grid grid-cols-2 gap-2 md:flex">{catalog.data?.categories.map((item) => { const Icon = categoryIcons[item.key] ?? Trophy; const first = catalog.data.boards.find((b) => b.category === item.key); return <button key={item.key} disabled={!first} onClick={() => { if (!first) return; update({ category: item.key, board: first.key, period: first.periods.includes("week") ? "week" : first.periods[0], page: 1 }); }} className={cn("flex items-center justify-center gap-2 rounded-xl border px-5 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50", category === item.key ? "border-[#FFB700]/60 bg-[#FFB700]/15 text-[#FFB700]" : "border-border bg-[#162638]/70 text-muted-foreground hover:border-[#af915f] hover:text-[#fce1b6]")}><Icon className="h-4 w-4" />{item.label}</button>; })}</div>
     </header>
     <div className="mt-6 grid gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">

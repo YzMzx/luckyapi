@@ -20,6 +20,7 @@ export default defineConfig({
       "api/**/*.spec.ts",
       "contracts/**/*.test.ts",
       "src/components/level-badge/**/*.test.ts",
+      "src/pages/perp/**/*.test.ts",
     ],
   },
 });

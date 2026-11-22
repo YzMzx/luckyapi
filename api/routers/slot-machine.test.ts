@@ -41,7 +41,7 @@ describe("daily slot control and settlement", () => {
     const seededConfigs = await db.select().from(slotConfigs);
     expect(seededConfigs).toEqual(expect.arrayContaining([
       expect.objectContaining({ version: "daily-slot-v1", status: "retired" }),
-      expect.objectContaining({ version: "daily-slot-v2-2505", status: "active", winRatePpm: 250_500, rtpPpm: 920_000 }),
+      expect.objectContaining({ version: "daily-slot-v3-3000", status: "active", winRatePpm: 300_000, rtpPpm: 920_000 }),
     ]));
     expect((await db.select().from(slotFund))[0]).toMatchObject({ balanceUnits: 1_000_000, reserveUnits: 300_000 });
 
@@ -73,10 +73,10 @@ describe("daily slot control and settlement", () => {
     const before = await funded.member.checkinStatus();
     expect(before).toMatchObject({ enabled: true, done: false, result: null });
     expect(before.rules).toMatchObject({
-      configVersion: "daily-slot-v2-2505",
+      configVersion: "daily-slot-v3-3000",
       allowedMaxBet: 5,
       mode: "base",
-      theoretical: { winRatePpm: 250_500, rtpPpm: 920_000, maxGrossPayout: 1100, maxNetLiability: 1095 },
+      theoretical: { winRatePpm: 300_000, rtpPpm: 920_000, maxGrossPayout: 500, maxNetLiability: 495 },
     });
 
     await expect(funded.member.checkin({ requestId: randomUUID(), expectedConfigVersion: "stale-version", bet: 1 }))
@@ -87,9 +87,9 @@ describe("daily slot control and settlement", () => {
     const result = await funded.member.checkin({ requestId, expectedConfigVersion: before.rules.configVersion, bet: 1 });
     expect(result.symbols).not.toBeNull();
     if (!result.symbols) throw new Error("expected symbols");
-    expect(result.configVersion).toBe("daily-slot-v2-2505");
+    expect(result.configVersion).toBe("daily-slot-v3-3000");
     expect(result.rtpPpm).toBe(920_000);
-    expect(result.winRatePpm).toBe(250_500);
+    expect(result.winRatePpm).toBe(300_000);
     if (result.win) {
       expect(new Set(result.symbols).size).toBe(1);
       expect(result.grossPayout).toBe(multiplyMoneyUnits(100, Math.round(result.payoutMultiplier * 10_000)) / 100);
@@ -104,10 +104,10 @@ describe("daily slot control and settlement", () => {
       userId: createdUsers[0].id,
       bet: 1,
       symbols: result.symbols.join(","),
-      configVersion: "daily-slot-v2-2505",
-      rulesSnapshot: expect.stringContaining("2505"),
+      configVersion: "daily-slot-v3-3000",
+      rulesSnapshot: expect.stringContaining("daily-slot-v3-3000"),
       fundBeforeUnits: 1_000_000,
-      winRatePpm: 250_500,
+      winRatePpm: 300_000,
       rtpPpm: 920_000,
     });
     expect(await db.select().from(transactions).where(eq(transactions.userId, createdUsers[0].id))).toHaveLength(1);
@@ -126,7 +126,7 @@ describe("daily slot control and settlement", () => {
     expect((await db.select().from(slotFund))[0].balanceUnits).toBe(fundBeforeFailure);
     expect(await db.select().from(checkins).where(eq(checkins.userId, createdUsers[1].id))).toHaveLength(0);
 
-    await db.update(slotFund).set({ balanceUnits: 100_000, reserveUnits: 78_100, dailyLossLimitUnits: 300_000, dayNetUnits: 0 }).where(eq(slotFund.id, 1));
+    await db.update(slotFund).set({ balanceUnits: 100_000, reserveUnits: 90_100, dailyLossLimitUnits: 300_000, dayNetUnits: 0 }).where(eq(slotFund.id, 1));
     const riskLimited = await retrying.member.checkinStatus();
     expect(riskLimited.rules.allowedMaxBet).toBe(1);
     await expect(retrying.member.checkin({ requestId: randomUUID(), expectedConfigVersion: riskLimited.rules.configVersion, bet: 2 }))
@@ -134,23 +134,29 @@ describe("daily slot control and settlement", () => {
     await db.update(slotFund).set({ balanceUnits: 1_000_000, reserveUnits: 300_000, dailyLossLimitUnits: 300_000, dayNetUnits: 0 }).where(eq(slotFund.id, 1));
 
     const preview = await admin.admin.previewSlotConfig(configInput("base", "新基础规则"));
-    expect(preview).toMatchObject({ winRatePercent: "25.05", rtpPercent: "92", maxGrossPayout: 1100, maxNetLiability: 1095 });
+    expect(preview).toMatchObject({ winRatePercent: "30", rtpPercent: "92", maxGrossPayout: 500, maxNetLiability: 495 });
     await expect(admin.admin.previewSlotConfig({
       ...configInput("base", "非法规则"),
       tiers: configInput("base", "非法规则").tiers.map((tier) => ({ ...tier, probabilityPercent: "100" })),
     })).rejects.toThrow();
-    const draft = await admin.admin.createSlotDraft(configInput("base", "新基础规则"));
+    const draft = await admin.admin.createSlotDraft({ ...configInput("base", "新基础规则"), maxBet: "8.03" });
+    expect((await retrying.member.checkinStatus()).rules.allowedMaxBet).toBe(5);
     await admin.admin.activateSlotConfig({ configId: draft.id });
     const switched = await retrying.member.checkinStatus();
-    expect(switched.rules.configVersion).toBe(draft.version);
+    expect(switched.rules).toMatchObject({ configVersion: draft.version, maxBet: 8.03, allowedMaxBet: 8.03 });
+    await expect(retrying.member.checkin({ requestId: randomUUID(), expectedConfigVersion: draft.version, bet: 8.04 }))
+      .rejects.toThrow("当前允许下注 $0.10–$8.03");
+    await expect(retrying.member.checkin({ requestId: randomUUID(), expectedConfigVersion: draft.version, bet: 8.021 }))
+      .rejects.toThrow("最多保留两位小数");
     await expect(retrying.member.checkin({ requestId: randomUUID(), expectedConfigVersion: before.rules.configVersion, bet: 1 }))
       .rejects.toThrow("规则刚刚更新");
 
     const concurrentRequest = randomUUID();
     const concurrent = await Promise.all([
-      retrying.member.checkin({ requestId: concurrentRequest, expectedConfigVersion: switched.rules.configVersion, bet: 0.5 }),
-      retrying.member.checkin({ requestId: concurrentRequest, expectedConfigVersion: switched.rules.configVersion, bet: 0.5 }),
+      retrying.member.checkin({ requestId: concurrentRequest, expectedConfigVersion: switched.rules.configVersion, bet: 8.03 }),
+      retrying.member.checkin({ requestId: concurrentRequest, expectedConfigVersion: switched.rules.configVersion, bet: 8.03 }),
     ]);
+    expect(concurrent[0].bet).toBe(8.03);
     expect(concurrent[0].symbols).toEqual(concurrent[1].symbols);
     expect(concurrent.filter((entry) => entry.idempotent)).toHaveLength(1);
     expect(await db.select().from(checkins).where(eq(checkins.userId, createdUsers[2].id))).toHaveLength(1);

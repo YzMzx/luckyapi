@@ -1,4 +1,3 @@
-import { Link } from "react-router";
 import { LEVEL_STAGES, getLevelThreshold } from "@contracts/levels";
 import { LevelBadge } from "@/components/level-badge/LevelBadge";
 import { trpc } from "@/providers/trpc";
@@ -12,17 +11,9 @@ export function LevelExhibit() {
   const hall = trpc.levels.hall.useQuery();
   return (
     <section aria-labelledby="level-seats-heading" className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="level-seats-heading" className="t-section">
-          等级铭牌 · 首达席位
-        </h2>
-        <Link
-          to="/badges"
-          className="text-sm text-[#fce1b6] underline underline-offset-4"
-        >
-          浏览等级铭牌图鉴 →
-        </Link>
-      </div>
+      <h2 id="level-seats-heading" className="t-section">
+        等级铭牌 · 首达席位
+      </h2>
       {hall.data ? (
         LEVEL_STAGES.map(({ level, name }) => {
           const seats = hall.data.filter(entry => entry.level === level);

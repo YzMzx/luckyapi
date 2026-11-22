@@ -13,6 +13,7 @@ import {
 const LINKS = [
   { to: "/entertainment", label: "娱乐" },
   { to: "/arena", label: "决斗场" },
+  { to: "/contracts", label: "模拟合约" },
   { to: "/leaderboard", label: "榜单" },
   { to: "/models", label: "模型广场" },
   { to: "/console", label: "控制台" },

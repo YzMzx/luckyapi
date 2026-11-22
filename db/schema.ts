@@ -446,7 +446,7 @@ export const transactions = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     userId: integer("user_id").notNull(),
     // draw=抽奖 checkin=签到 video_reward=看视频红包 redeem=兑换 adjust=管理员调整 usage=调用扣费
-    kind: text("kind", { enum: ["draw", "checkin", "video_reward", "redeem", "credit_expire", "adjust", "usage", "duel", "permanent_debit", "transfer_out", "transfer_in", "loan_disbursement", "loan_due", "loan_repayment", "loan_offer_refund"] }).notNull(),
+    kind: text("kind", { enum: ["draw", "checkin", "video_reward", "redeem", "credit_expire", "adjust", "usage", "duel", "permanent_debit", "transfer_out", "transfer_in", "loan_disbursement", "loan_due", "loan_repayment", "loan_offer_refund", "perp_exchange_in", "perp_exchange_out"] }).notNull(),
     // 有符号金额（收入为正，支出为负）
     amount: real("amount").notNull(),
     balanceAfter: real("balance_after").notNull(),
