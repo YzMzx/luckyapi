@@ -445,6 +445,7 @@ export const memberRouter = createRouter({
     .mutation(({ ctx, input }) => {
       const db = getDb();
       const normalizedCode = input.code.trim();
+      // 读取前取得写锁，使不同连接的兑换等待最新状态，避免从旧的 WAL 快照升级写事务。
       return db.transaction((tx) => {
         const code = tx.select().from(inviteCodes).where(and(
           eq(inviteCodes.code, normalizedCode),
@@ -499,18 +500,16 @@ export const memberRouter = createRouter({
           throw new TRPCError({ code: "BAD_REQUEST", message: "兑换码已用完" });
         }
 
-        let redemption: typeof codeRedemptions.$inferSelect;
-        try {
-          redemption = tx.insert(codeRedemptions).values({
-            codeId: code.id,
-            code: code.code,
-            userId: ctx.user.id,
-            amount,
-            balanceBefore,
-            balanceBelow,
-            creditExpiresAt,
-          }).returning().get();
-        } catch {
+        const redemption = tx.insert(codeRedemptions).values({
+          codeId: code.id,
+          code: code.code,
+          userId: ctx.user.id,
+          amount,
+          balanceBefore,
+          balanceBelow,
+          creditExpiresAt,
+        }).onConflictDoNothing({ target: [codeRedemptions.codeId, codeRedemptions.userId] }).returning().get();
+        if (!redemption) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "你已经兑换过这个兑换码" });
         }
         if (creditExpiresAt) createTimedCreditGrant(tx, {
@@ -539,7 +538,7 @@ export const memberRouter = createRouter({
             ? `兑换成功，$${amount.toFixed(2)} 已到账；剩余额度将于 ${creditExpiresAt.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}（北京时间）失效`
             : `兑换成功，$${amount.toFixed(2)} 永久额度已到账`,
         };
-      });
+      }, { behavior: "immediate" });
     }),
 
   // ---- 老虎机：服务端安全随机、固定赔率表、后台配置每日次数限制 ----

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -7,6 +7,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pager } from "@/components/Pager";
+
+const redemptionModes = [
+  { value: "single", label: "全局单次", help: "每个码只能被一个账号兑换一次。" },
+  { value: "allUsers", label: "全员补偿（每人一次）", help: "生成一个共享码，不限人数、无余额门槛。每个账号可用同一个码领取一次面额所示的额度。" },
+  { value: "reusable", label: "多账号可重复", help: "每个账号对同一码只能兑换一次；可设置总次数和余额门槛，留空表示不限。" },
+] as const;
+type RedemptionMode = typeof redemptionModes[number]["value"];
 
 export default function Invites() {
   const utils = trpc.useUtils();
@@ -18,7 +25,9 @@ export default function Invites() {
   const [inviteCount, setInviteCount] = useState(10);
   const [codeType, setCodeType] = useState<"invite" | "redeem">("invite");
   const [codeAmount, setCodeAmount] = useState("5");
-  const [codeMode, setCodeMode] = useState<"single" | "reusable">("single");
+  const [codeMode, setCodeMode] = useState<RedemptionMode>("single");
+  const allUsers = codeType === "redeem" && codeMode === "allUsers";
+  const formId = useId();
   const [maxUses, setMaxUses] = useState("");
   const [balanceBelow, setBalanceBelow] = useState("");
   const [creditExpiresAt, setCreditExpiresAt] = useState("");
@@ -34,7 +43,15 @@ export default function Invites() {
   const ok = (msg: string) => () => { toast.success(msg); utils.admin.invalidate(); };
   const fail = (e: { message: string }) => toast.error(e.message);
 
-  const genInvites = trpc.admin.generateInvites.useMutation({ onSuccess: ok("已生成"), onError: fail });
+  const genInvites = trpc.admin.generateInvites.useMutation({
+    onSuccess: ({ codes }) => {
+      setPage(1);
+      setCodeStatus("active");
+      toast.success(codes.length === 1 ? `已生成：${codes[0]}` : `已生成 ${codes.length} 个码`);
+      utils.admin.invalidate();
+    },
+    onError: fail,
+  });
   const delInvite = trpc.admin.deleteInvite.useMutation({
     onSuccess: (result) => {
       toast.success(result.action === "archive" ? "已安全归档，历史兑换记录保留" : "未使用码已物理删除");
@@ -67,9 +84,9 @@ export default function Invites() {
   return (
     <div className="rounded-xl border border-border bg-card p-6">
       <div className="flex flex-wrap items-center gap-3">
-        <Label className="text-primary">批量生成</Label>
+        <Label htmlFor={`${formId}-type`} className="text-primary">生成码类型</Label>
         <Select value={codeType} onValueChange={(v) => setCodeType(v as "invite" | "redeem")}>
-          <SelectTrigger className="w-36 border-border bg-[hsl(var(--admin-control))]"><SelectValue /></SelectTrigger>
+          <SelectTrigger id={`${formId}-type`} className="w-36 border-border bg-[hsl(var(--admin-control))]"><SelectValue /></SelectTrigger>
           <SelectContent className="border-border bg-card text-foreground">
             <SelectItem value="invite">邀请码</SelectItem>
             <SelectItem value="redeem">兑换码（充值）</SelectItem>
@@ -77,46 +94,55 @@ export default function Invites() {
         </Select>
         {codeType !== "invite" && (
           <>
-            <Label className="text-muted-foreground">面额 $</Label>
-            <Input type="number" min={0.01} step={0.01} value={codeAmount}
+            <Label htmlFor={`${formId}-amount`} className="text-muted-foreground">面额 $</Label>
+            <Input id={`${formId}-amount`} type="number" min={0.01} step={0.01} value={codeAmount}
               onChange={(e) => setCodeAmount(e.target.value)}
               className="w-24 border-border bg-[hsl(var(--admin-control))]" />
-            <Select value={codeMode} onValueChange={(v) => setCodeMode(v as "single" | "reusable") }>
-              <SelectTrigger className="w-44 border-border bg-[hsl(var(--admin-control))]"><SelectValue /></SelectTrigger>
-              <SelectContent className="border-border bg-card text-foreground">
-                <SelectItem value="single">全局单次</SelectItem>
-                <SelectItem value="reusable">多账号可重复</SelectItem>
-              </SelectContent>
-            </Select>
+            <fieldset className="min-w-0">
+              <legend className="text-xs text-muted-foreground">领取方式</legend>
+              <div className="flex flex-wrap gap-x-4">
+                {redemptionModes.map(({ value, label }) => (
+                  <div key={value} className="flex items-center gap-1.5">
+                    <input type="radio" name={`${formId}-mode`} id={`${formId}-${value}`}
+                      value={value} checked={codeMode === value} onChange={() => setCodeMode(value)}
+                      aria-describedby={codeMode === value ? `${formId}-mode-help` : undefined} />
+                    <label htmlFor={`${formId}-${value}`} className="inline-flex min-h-11 cursor-pointer items-center text-sm">{label}</label>
+                  </div>
+                ))}
+              </div>
+              <p id={`${formId}-mode-help`} className="text-xs text-muted-foreground">
+                {redemptionModes.find(({ value }) => value === codeMode)?.help}
+              </p>
+            </fieldset>
             {codeMode === "reusable" && <Input type="number" min={2} step={1} value={maxUses}
               onChange={(e) => setMaxUses(e.target.value)} placeholder="总次数（留空不限）"
               className="w-40 border-border bg-[hsl(var(--admin-control))]" />}
-            <Input type="number" min={0} step={0.01} value={balanceBelow}
+            {!allUsers && <Input type="number" min={0} step={0.01} value={balanceBelow}
               onChange={(e) => setBalanceBelow(e.target.value)} placeholder="余额低于（留空不限制）"
-              className="w-48 border-border bg-[hsl(var(--admin-control))]" />
+              className="w-48 border-border bg-[hsl(var(--admin-control))]" />}
             <div className="space-y-1"><Label className="text-[10px] text-muted-foreground">额度失效时间（北京时间，留空永久）</Label><Input type="datetime-local" value={creditExpiresAt}
               onChange={(e) => setCreditExpiresAt(e.target.value)}
               className="w-56 border-border bg-[hsl(var(--admin-control))]" /></div>
           </>
         )}
-        <Label className="text-muted-foreground">数量</Label>
-        <Input type="number" min={1} max={100} value={inviteCount}
+        <Label htmlFor={`${formId}-count`} className="text-muted-foreground">生成数量</Label>
+        <Input id={`${formId}-count`} type="number" disabled={allUsers} min={1} max={100} value={allUsers ? 1 : inviteCount}
           onChange={(e) => setInviteCount(Number(e.target.value))}
           className="w-24 border-border bg-[hsl(var(--admin-control))]" />
-        <button
+        <button type="button" disabled={genInvites.isPending}
           onClick={() => genInvites.mutate({
-            count: inviteCount, type: codeType,
+            count: allUsers ? 1 : inviteCount, type: codeType,
             amount: codeType !== "invite" ? Number(codeAmount) : undefined,
-            mode: codeType !== "invite" ? codeMode : "single",
+            mode: codeType === "redeem" && codeMode !== "single" ? "reusable" : "single",
             maxUses: codeType !== "invite" && codeMode === "reusable" && maxUses
               ? Number(maxUses)
               : null,
-            balanceBelow: codeType === "redeem" && balanceBelow !== "" ? Number(balanceBelow) : null,
+            balanceBelow: codeType === "redeem" && !allUsers && balanceBelow !== "" ? Number(balanceBelow) : null,
             creditExpiresAt: codeType === "redeem" && creditExpiresAt
               ? Date.parse(`${creditExpiresAt}${creditExpiresAt.length === 16 ? ":00" : ""}+08:00`)
               : null,
           })}
-          className="btn-3d rounded-lg bg-accent px-5 py-2 text-sm font-black text-accent-foreground">生成</button>
+          className="btn-3d rounded-lg bg-accent px-5 py-2 text-sm font-black text-accent-foreground disabled:opacity-50">{genInvites.isPending ? "生成中…" : "生成"}</button>
         <button type="button" disabled={!cleanup.data?.eligibleCount || archiveUsed.isPending}
           onClick={() => {
             const count = cleanup.data?.eligibleCount ?? 0;
@@ -138,9 +164,6 @@ export default function Invites() {
           </SelectContent>
         </Select>
       </div>
-      <p className="mt-3 text-xs text-muted-foreground">
-        多账号可重复模式下，同一账号对同一码只能兑换一次；总次数可限制或留空表示不限。
-      </p>
       <Table className="mt-6">
         <TableHeader><TableRow className="border-border hover:bg-transparent">
           <TableHead className={th}>码</TableHead><TableHead className={th}>类型</TableHead>
@@ -152,6 +175,7 @@ export default function Invites() {
           {invites.isLoading && <TableRow className="border-border"><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">加载额度码中…</TableCell></TableRow>}
           {invites.error && <TableRow className="border-border"><TableCell colSpan={10} className="py-10 text-center text-sm text-[#EF5459]">额度码加载失败：{invites.error.message} <button onClick={() => invites.refetch()} className="ml-2 font-bold text-accent hover:underline">重试</button></TableCell></TableRow>}
           {invites.data?.items.map((c) => {
+            const isAllUsers = c.type === "redeem" && c.mode === "reusable" && c.maxUses === null && c.balanceBelow === null;
             const exhausted = c.mode === "single"
               ? c.redemptionCount > 0 || !!c.usedBy
               : c.maxUses !== null && c.redemptionCount >= c.maxUses;
@@ -164,7 +188,7 @@ export default function Invites() {
                   ? <span className="rounded bg-[#00B77D]/20 px-1.5 py-0.5 text-xs text-[#00B77D]">兑换码</span>
                   : <span className="rounded bg-[#176EFF]/20 px-1.5 py-0.5 text-xs text-[#7db4ff]">邀请码</span>}
               </TableCell>
-              <TableCell className="text-xs text-muted-foreground">{c.mode === "reusable" ? "多账号可重复" : "全局单次"}</TableCell>
+              <TableCell className="text-xs text-muted-foreground">{isAllUsers ? "全员补偿（每人一次）" : c.mode === "reusable" ? "多账号（每人一次）" : "全局单次"}</TableCell>
               <TableCell className="font-num text-right text-foreground">{c.amount ? `$${c.amount}` : "—"}</TableCell>
               <TableCell className="text-xs text-muted-foreground">{c.type === "redeem" ? (c.balanceBelow === null ? "无" : `< $${Number(c.balanceBelow).toFixed(2)}`) : "—"}</TableCell>
               <TableCell className="text-xs text-muted-foreground">{c.type !== "redeem" ? "—" : c.creditExpiresAt ? <><span className="block text-accent">{new Date(c.creditExpiresAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}</span><span className="text-[10px]">北京时间</span></> : "永久"}</TableCell>
@@ -178,7 +202,10 @@ export default function Invites() {
               </TableCell>
               <TableCell className="text-right">
                 {!exhausted && !creditDeadlinePassed && !c.archivedAt && <button className="mr-3 text-xs text-primary hover:underline"
-                  onClick={() => { navigator.clipboard.writeText(c.code); toast.success("已复制"); }}>复制</button>}
+                  onClick={async () => {
+                    try { await navigator.clipboard.writeText(c.code); toast.success("已复制"); }
+                    catch { toast.error("复制失败，请手动复制列表中的码"); }
+                  }}>复制</button>}
                 {c.auditCount > 0 && <button className="mr-3 text-xs text-primary hover:underline"
                   onClick={() => { setHistoryPage(1); setHistoryCode({ id: c.id, code: c.code }); }}>记录</button>}
                 {c.type === "redeem" && !c.archivedAt && <button className="mr-3 text-xs text-[#7db4ff] hover:underline"

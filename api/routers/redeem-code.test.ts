@@ -38,10 +38,16 @@ describe("redeem code modes and cleanup", () => {
       resHeaders: new Headers(),
     });
 
-    const [single, reusable, unlimited, unused, usedSingleDelete, partialReusable, racingReusable] = await db.insert(inviteCodes).values([
+    const { codes } = await admin.admin.generateInvites({
+      type: "redeem", amount: 2, count: 1, mode: "reusable", maxUses: null, balanceBelow: null,
+    });
+    expect(codes).toHaveLength(1);
+    const [unlimited] = await db.select().from(inviteCodes).where(eq(inviteCodes.code, codes[0]));
+    expect(unlimited).toMatchObject({ type: "redeem", mode: "reusable", maxUses: null, balanceBelow: null });
+
+    const [single, reusable, unused, usedSingleDelete, partialReusable, racingReusable] = await db.insert(inviteCodes).values([
       { code: "LD-SINGLE", type: "redeem", amount: 5, mode: "single" },
       { code: "LD-MULTI-2", type: "redeem", amount: 3, mode: "reusable", maxUses: 2 },
-      { code: "LD-UNLIMITED", type: "redeem", amount: 2, mode: "reusable", maxUses: null },
       { code: "LD-UNUSED", type: "redeem", amount: 1, mode: "single" },
       { code: "LD-USED-DELETE", type: "redeem", amount: 4, mode: "single" },
       { code: "LD-PARTIAL", type: "redeem", amount: 1, mode: "reusable", maxUses: 5 },
