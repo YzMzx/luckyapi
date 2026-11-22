@@ -7,6 +7,7 @@ import {
   lookupPerpInstrument,
   getPerpMarket,
   getPerpQuote,
+  getPerpQuoteStatus,
   PERP_MARKET_SCHEMA,
 } from "./market";
 const symbol = "BTCUSDT",
@@ -228,6 +229,10 @@ it.each([
     "suspended prelisting auction",
     { tick: { curPreListingPhase: "CallAuction" } },
   ],
+  [
+    "active pre-market trading",
+    { tick: { curPreListingPhase: "ContinuousTrading" } },
+  ],
   ["bad price precision", { tick: { bid1Price: "100.12345" } }],
   ["mismatched contract", { tick: { symbol: "ETHUSDT" } }],
 ] as const)("rejects %s for execution", async (_, invalid) => {
@@ -242,6 +247,58 @@ it.each([
   );
   expect(await getPerpQuote(db, symbol)).toBeNull();
 });
+it.each([
+  ["Trading", false, true],
+  ["Trading", true, false],
+  ["Settling", false, false],
+] as const)(
+  "blocks ANT with a specific reason when its ticker phase is Finished (%s, pre-market=%s)",
+  async (status, isPreListing, inspectTicker) => {
+    const ant = "ANTUSDT";
+    const mock = feed(url => {
+      expect(url.searchParams.get("symbol")).toBe(ant);
+      return url.pathname.endsWith("instruments-info")
+        ? reply(
+            [
+              {
+                ...instrument,
+                symbol: ant,
+                baseCoin: "ANT",
+                status,
+                isPreListing,
+                priceFilter: { tickSize: "0.01" },
+              },
+            ],
+            { symbol: ant }
+          )
+        : reply(
+            [
+              {
+                ...ticker,
+                symbol: ant,
+                bid1Price: "89.87",
+                ask1Price: "89.88",
+                bid1Size: "12.566",
+                ask1Size: "124.523",
+                markPrice: "89.87",
+                lastPrice: "89.87",
+                fundingRate: "0",
+                curPreListingPhase: "Finished",
+              },
+            ],
+            { symbol: ant }
+          );
+    });
+    expect(await getPerpQuote(db, ant)).toBeNull();
+    expect(await getPerpQuoteStatus(db, ant)).toEqual({
+      quote: null,
+      readOnlyReason: inspectTicker
+        ? expect.stringContaining("Finished")
+        : null,
+    });
+    expect(mock).toHaveBeenCalledTimes(inspectTicker ? 2 : 1);
+  }
+);
 const nvda = "NVDAUSDT";
 const nvdaInstrument = {
   ...instrument,

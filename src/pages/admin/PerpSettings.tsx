@@ -3,6 +3,11 @@ import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../api/router";
 import { trpc } from "@/providers/trpc";
 import { Input } from "@/components/ui/input";
+import {
+  isValidPerpLeverage,
+  PERP_LEVERAGE_MAX,
+  PERP_LEVERAGE_MIN,
+} from "@contracts/perp-leverage";
 
 type Settings = inferRouterOutputs<AppRouter>["admin"]["perpSettings"]["get"];
 type Instrument =
@@ -19,6 +24,8 @@ function draftOf(saved: Settings) {
     })),
     depositsEnabled: saved.depositsEnabled,
     tradingEnabled: saved.tradingEnabled,
+    minLeverage: String(saved.minLeverage),
+    maxLeverage: String(saved.maxLeverage),
     exchangeRate: String(saved.exchangeRate),
     redemptionFeePercent: (saved.redemptionFeeBps / 100).toFixed(2),
     userLimit: String(saved.userLimitUnits / 1000),
@@ -131,6 +138,7 @@ function SymbolCatalog({
               ["最小数量", spec.minQtyUnits / 1e8],
               ["市价单最大数量", spec.maxQtyUnits / 1e8],
               ["最小名义价值（USDT）", spec.minNotionalUnits / 1000],
+              ["Bybit 最大杠杆（倍）", spec.maxLeverage],
               ["报价步长（USDT）", spec.tickSizeUnits / 1000],
               ["资金费周期（分钟）", spec.fundingIntervalMs / 60000],
             ].map(([label, value]) => (
@@ -218,11 +226,22 @@ function Form({
   const [draft, setDraft] = useState(() => draftOf(saved));
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [leverageChecked, setLeverageChecked] = useState(false);
   const sending = useRef(false);
   const dirty = JSON.stringify(draft) !== JSON.stringify(draftOf(saved));
+  const minLeverage = Number(draft.minLeverage),
+    maxLeverage = Number(draft.maxLeverage);
+  const leverageIssue = !isValidPerpLeverage(minLeverage)
+    ? { field: "minLeverage", message: "请输入有效的最小杠杆。" }
+    : !isValidPerpLeverage(maxLeverage)
+      ? { field: "maxLeverage", message: "请输入有效的最大杠杆。" }
+      : minLeverage > maxLeverage
+        ? { field: "maxLeverage", message: "最大杠杆不得低于最小杠杆。" }
+        : null;
+  const leverageError = leverageChecked ? leverageIssue : null;
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!dirty || sending.current || unavailable) return;
+    if (!dirty || sending.current || unavailable || leverageIssue) return;
     setError("");
     setMessage("");
     const userLimitUnits = parseUnits(draft.userLimit),
@@ -274,6 +293,8 @@ function Form({
           .map(s => s.symbol),
         depositsEnabled: draft.depositsEnabled,
         tradingEnabled: draft.tradingEnabled,
+        ...(minLeverage !== saved.minLeverage ? { minLeverage } : {}),
+        ...(maxLeverage !== saved.maxLeverage ? { maxLeverage } : {}),
         exchangeRate,
         redemptionFeeBps,
         userLimitUnits,
@@ -339,6 +360,59 @@ function Form({
               </div>
             ))}
           </div>
+        </section>
+        <section className={panel}>
+          <h2 className="font-bold">开仓杠杆范围</h2>
+          <p className={hint} id="leverage-policy-help">
+            输入 {PERP_LEVERAGE_MIN} 至 {PERP_LEVERAGE_MAX}{" "}
+            的整数。每个品种的最大杠杆还受 Bybit
+            合约上限限制。已有仓位的杠杆不会改变，超出新范围的仓位只能平仓，不能加仓。
+          </p>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            {(
+              [
+                ["minLeverage", "min-leverage", "最小杠杆（倍）"],
+                ["maxLeverage", "max-leverage", "最大杠杆（倍）"],
+              ] as const
+            ).map(([key, id, label]) => {
+              const issue =
+                leverageError?.field === key ? leverageError.message : null;
+              return (
+                <div key={key}>
+                  <label htmlFor={id}>{label}</label>
+                  <Input
+                    id={id}
+                    name={key}
+                    className="admin-input mt-1"
+                    type="number"
+                    inputMode="numeric"
+                    required
+                    min={PERP_LEVERAGE_MIN}
+                    max={PERP_LEVERAGE_MAX}
+                    step={1}
+                    aria-invalid={!!issue}
+                    aria-describedby={
+                      issue
+                        ? "leverage-policy-help leverage-error"
+                        : "leverage-policy-help"
+                    }
+                    value={draft[key]}
+                    onBlur={() => setLeverageChecked(true)}
+                    onChange={e =>
+                      setDraft({ ...draft, [key]: e.target.value })
+                    }
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <p
+            id="leverage-error"
+            className="mt-1 text-sm text-destructive"
+            role="status"
+          >
+            {leverageError?.message}
+          </p>
         </section>
         <SymbolCatalog
           rows={draft.symbols}
@@ -432,7 +506,6 @@ function Form({
               ["行情来源", "Bybit V5 公共行情 · 服务端直连"],
               ["图表", "1、3、5、15 分钟 K 线（默认 1 分钟）"],
               ["仓位模式", "逐仓 · USDT 本位永续"],
-              ["杠杆", saved.allowedLeverage.map(n => n + "×").join(" / ")],
               ["模拟 Taker 手续费", (saved.takerFeeBps / 100).toFixed(2) + "%"],
               [
                 "维持保证金率",
@@ -449,7 +522,7 @@ function Form({
         <div className="flex gap-3">
           <button
             className="admin-primary px-5 py-2"
-            disabled={!dirty}
+            disabled={!dirty || !!leverageIssue}
             type="submit"
           >
             {mutation.isPending ? "保存中…" : "保存合约配置"}
@@ -460,6 +533,7 @@ function Form({
             disabled={!dirty}
             onClick={() => {
               setDraft(draftOf(saved));
+              setLeverageChecked(false);
               setMessage("");
               setError("");
             }}

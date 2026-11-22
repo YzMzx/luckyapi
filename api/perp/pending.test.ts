@@ -71,6 +71,46 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("durable simulated pending orders", () => {
+  it("validates a custom leverage at submission and checks the updated range again before filling", () => {
+    const rules = db.prepare(
+      "INSERT OR REPLACE INTO settings VALUES('bybit_perp_config_v1', ?)"
+    );
+    const setRange = (minLeverage: number, maxLeverage: number) =>
+      rules.run(
+        JSON.stringify({
+          symbols: [symbol],
+          tradingEnabled: true,
+          depositsEnabled: true,
+          userLimitUnits: 1_000_000,
+          platformLimitUnits: 1_000_000,
+          minLeverage,
+          maxLeverage,
+        })
+      );
+    setRange(3, 100);
+    const tick = () => quote(98_000, 98_500, 98_500, { maxLeverage: 50 });
+    expect(() => createPending(db, 1, order({ leverage: 51 }), tick())).toThrow(
+      "3× 至 50×"
+    );
+    const first = createPending(db, 1, order({ leverage: 25 }), tick());
+    expect(first.leverage).toBe(25);
+    setRange(3, 20);
+    advance();
+    expect(match(first.id, tick())).toMatchObject({
+      status: "rejected",
+      reason: expect.stringContaining("3× 至 20×"),
+    });
+    expect(
+      db.prepare("SELECT count(*) FROM perp_positions").pluck().get()
+    ).toBe(0);
+    setRange(3, 100);
+    const second = createPending(db, 1, order({ leverage: 25 }), tick());
+    advance();
+    expect(match(second.id, tick())).toMatchObject({
+      status: "filled",
+      leverage: 25,
+    });
+  });
   it("fills at a qualifying ask, preserves idempotency, and rejects cross-operation reuse", async () => {
     const i = order(),
       r = createPending(db, 1, i, quote());

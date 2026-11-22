@@ -1,9 +1,20 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
+import {
+  DEFAULT_PERP_MIN_LEVERAGE,
+  DEFAULT_PERP_MAX_LEVERAGE,
+  PERP_LEVERAGE_MIN,
+  PERP_LEVERAGE_MAX,
+  getPerpLeverageRange,
+} from "@contracts/perp-leverage";
 
 const configKey = "bybit_perp_config_v1";
 export const PERP_SYMBOLS = ["BTCUSDT", "ETHUSDT"] as const;
-export const PERP_LEVERAGES = [1, 2, 5] as const;
+export const perpLeverageSchema = z
+  .number()
+  .int()
+  .min(PERP_LEVERAGE_MIN)
+  .max(PERP_LEVERAGE_MAX);
 export const perpSymbolSchema = z
   .string()
   .max(32)
@@ -29,6 +40,8 @@ export const perpSettingsInput = z
       .optional(),
     depositsEnabled: z.boolean(),
     tradingEnabled: z.boolean(),
+    minLeverage: perpLeverageSchema.optional(),
+    maxLeverage: perpLeverageSchema.optional(),
     exchangeRate: z.number().int().min(1).max(1_000_000).optional(),
     redemptionFeeBps: z.number().int().min(0).max(9999).optional(),
     userLimitUnits: positiveUnits,
@@ -41,6 +54,16 @@ export const perpSettingsInput = z
     {
       path: ["closeOnlySymbols"],
       message: "仅平仓合约必须在已选品种中",
+    }
+  )
+  .refine(
+    value =>
+      value.minLeverage === undefined ||
+      value.maxLeverage === undefined ||
+      value.minLeverage <= value.maxLeverage,
+    {
+      path: ["maxLeverage"],
+      message: "最高杠杆不能低于最低杠杆",
     }
   )
   .refine(value => value.userLimitUnits <= value.platformLimitUnits, {
@@ -59,13 +82,26 @@ function view(input: PerpSettingsInput) {
       name: symbol.slice(0, -4) + "/USDT 永续",
       openEnabled: !input.closeOnlySymbols?.includes(symbol),
     })),
-    allowedLeverage: [...PERP_LEVERAGES],
+    minLeverage: input.minLeverage ?? DEFAULT_PERP_MIN_LEVERAGE,
+    maxLeverage: input.maxLeverage ?? DEFAULT_PERP_MAX_LEVERAGE,
     takerFeeBps: TAKER_FEE_BPS,
     maintenanceMarginBps: MAINTENANCE_MARGIN_BPS,
   };
 }
 export type PerpConfig = ReturnType<typeof view>;
 export class PerpConfigError extends Error {}
+
+export function openLeverageProblem(
+  config: PerpConfig,
+  leverage: number,
+  instrumentMax?: number
+) {
+  const { min, max } = getPerpLeverageRange(config, instrumentMax);
+  if (max < min) return "合约杠杆上限低于本站最低杠杆，暂不可开仓";
+  if (leverage < min || leverage > max)
+    return "开仓杠杆须在 " + min + "× 至 " + max + "× 之间";
+  return null;
+}
 export function readPerpConfig(db?: Database.Database): PerpConfig {
   const saved = db
     ?.prepare<[string], { value: string }>(
@@ -81,7 +117,10 @@ export function readPerpConfig(db?: Database.Database): PerpConfig {
       platformLimitUnits: 1_000_000_000,
     });
   try {
-    return view(perpSettingsInput.parse(JSON.parse(saved.value)));
+    const config = view(perpSettingsInput.parse(JSON.parse(saved.value)));
+    if (config.minLeverage > config.maxLeverage)
+      throw new Error("杠杆范围无效");
+    return config;
   } catch {
     throw new Error("永续合约运营配置损坏，请检查数据库备份");
   }
@@ -163,7 +202,11 @@ function commitConfig(
         closeOnlySymbols: closeOnly(edit, previous),
         exchangeRate: edit.exchangeRate ?? previous.exchangeRate,
         redemptionFeeBps: edit.redemptionFeeBps ?? previous.redemptionFeeBps,
+        minLeverage: edit.minLeverage ?? previous.minLeverage,
+        maxLeverage: edit.maxLeverage ?? previous.maxLeverage,
       };
+      if (values.minLeverage > values.maxLeverage)
+        throw new PerpConfigError("最高杠杆不能低于最低杠杆");
       const positions = db
         .prepare<[], { symbol: PerpSymbol }>(
           "SELECT DISTINCT symbol FROM perp_positions WHERE quantity_atoms > 0"

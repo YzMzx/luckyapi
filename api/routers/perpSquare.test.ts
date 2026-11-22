@@ -82,6 +82,42 @@ it("shares only member-facing open positions and expires visible-tab presence", 
       })
     ).items[0].symbol
   ).toBe("NVDAUSDT");
+  const categories = [
+    { symbol: "BTCUSDT", total: 1 },
+    { symbol: "ETHUSDT", total: 1 },
+    { symbol: "NVDAUSDT", total: 1 },
+  ];
+  expect(
+    await viewer.perps.positionSquare({
+      symbol: "NVDAUSDT",
+      page: 2,
+      pageSize: 1,
+    })
+  ).toMatchObject({
+    categories,
+    total: 1,
+    page: 1,
+    onlineHolders: 1,
+    items: [{ symbol: "NVDAUSDT" }],
+  });
+  expect(
+    await viewer.perps.positionSquare({ symbol: "ETHUSDT", onlineOnly: true })
+  ).toMatchObject({
+    categories,
+    total: 0,
+    onlineHolders: 0,
+    items: [],
+  });
+  expect(
+    await viewer.perps.positionSquare({ symbol: "DOGEUSDT" })
+  ).toMatchObject({
+    categories,
+    total: 0,
+    items: [],
+  });
+  await expect(
+    viewer.perps.positionSquare({ symbol: "invalid" })
+  ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   vi.setSystemTime(now + 90000);
   expect((await viewer.perps.positionSquare({ onlineOnly: true })).total).toBe(
     0
@@ -96,6 +132,7 @@ it("shares only member-facing open positions and expires visible-tab presence", 
   db.$client.prepare("DELETE FROM perp_positions WHERE user_id=?").run(a.id);
   expect(await viewer.perps.positionSquare({})).toMatchObject({
     total: 1,
+    categories: [{ symbol: "ETHUSDT", total: 1 }],
     onlineHolders: 0,
   });
 });

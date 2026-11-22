@@ -4,7 +4,7 @@ import { useMe } from "@/hooks/useMe";
 import { SiteNav } from "@/components/SiteNav";
 import { Pager } from "@/components/Pager";
 import { trpc } from "@/providers/trpc";
-import { baseCoin, button, coin, sim, panel } from "./format";
+import { baseCoin, button, coin, input, sim, panel } from "./format";
 import { Table } from "./shared";
 import { usePerpPresence } from "./usePerpPresence";
 
@@ -13,13 +13,20 @@ export default function PerpSquare() {
     requireAuth: true,
     requireOnboarded: true,
   });
-  const [onlineOnly, setOnline] = useState(false),
+  const [symbol, setSymbol] = useState(""),
+    [onlineOnly, setOnline] = useState(false),
     [page, setPage] = useState(1);
   usePerpPresence(!!user?.onboarded);
   const list = trpc.perps.positionSquare.useQuery(
-    { page, pageSize: 20, onlineOnly },
-    { enabled: !!user?.onboarded, refetchInterval: 15000, retry: 1 }
+    { page, pageSize: 20, onlineOnly, symbol: symbol || undefined },
+    {
+      enabled: !!user?.onboarded,
+      refetchInterval: 15000,
+      retry: 1,
+      placeholderData: previous => previous,
+    }
   );
+  const categories = list.data?.categories ?? [];
   if (isLoading || !user?.onboarded)
     return <p className="p-8 text-center">正在读取账户…</p>;
   return (
@@ -42,7 +49,7 @@ export default function PerpSquare() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-bold">
               玩家持仓
-              {list.data && !list.error && (
+              {list.data && !list.error && !list.isPlaceholderData && (
                 <span className="ml-2 text-sm font-normal">
                   在线持仓玩家：{list.data.onlineHolders} 人
                 </span>
@@ -60,7 +67,33 @@ export default function PerpSquare() {
               只看在线玩家
             </label>
           </div>
-          {list.isLoading && <p role="status">正在加载…</p>}
+          <div className="mt-3 max-w-xs text-sm">
+            <label htmlFor="square-contract">合约分类</label>
+            <select
+              id="square-contract"
+              className={input}
+              value={symbol}
+              disabled={!symbol && !categories.length}
+              onChange={e => {
+                setSymbol(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">全部合约</option>
+              {symbol &&
+                !categories.some(category => category.symbol === symbol) && (
+                  <option value={symbol}>{symbol}</option>
+                )}
+              {categories.map(category => (
+                <option key={category.symbol} value={category.symbol}>
+                  {category.symbol}（{category.total} 笔）
+                </option>
+              ))}
+            </select>
+          </div>
+          {(list.isLoading || list.isPlaceholderData) && (
+            <p role="status">正在加载…</p>
+          )}
           {list.error ? (
             <p role="alert">
               持仓读取失败：{list.error.message}{" "}
@@ -69,11 +102,12 @@ export default function PerpSquare() {
               </button>
             </p>
           ) : (
-            list.data && (
+            list.data &&
+            !list.isPlaceholderData && (
               <>
                 {list.data.items.length ? (
                   <Table
-                    title="会员公开持仓"
+                    title={symbol ? `${symbol} 会员公开持仓` : "会员公开持仓"}
                     columns={[
                       "玩家",
                       "合约页状态",
@@ -111,7 +145,9 @@ export default function PerpSquare() {
                   </Table>
                 ) : (
                   <p className="py-5 text-sm text-muted-foreground">
-                    {onlineOnly ? "暂无在线玩家持仓。" : "目前还没有公开持仓。"}
+                    {onlineOnly
+                      ? "所选分类暂无在线玩家持仓。"
+                      : "所选分类暂无公开持仓。"}
                   </p>
                 )}
                 <Pager

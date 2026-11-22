@@ -7,6 +7,7 @@ import {
   exchangePerp,
   getPerpAccount,
   previewPerpExchange,
+  previewPerpExchangeForUser,
   placePerpOrder,
   liquidatePerpPositions,
   applyPerpFunding,
@@ -100,6 +101,60 @@ afterEach(() => {
   db.close();
   vi.useRealTimers();
   vi.unstubAllEnvs();
+});
+it("accepts arbitrary integer leverage within the configured and instrument bounds, and preserves closing after a range change", async () => {
+  convert(1, "in", 1_000_000);
+  const market = (maxLeverage: number) => feed(100_000, { maxLeverage });
+  await expect(
+    placePerpOrder(db, 1, { ...open(), leverage: 30 }, market(100))
+  ).rejects.toThrow("1× 至 5×");
+  savePerpConfig(db, { ...config, minLeverage: 3, maxLeverage: 100 });
+  await expect(
+    placePerpOrder(db, 1, { ...open(), leverage: 2 }, market(100))
+  ).rejects.toThrow("3× 至 100×");
+  await expect(
+    placePerpOrder(db, 1, { ...open(), leverage: 31 }, market(30))
+  ).rejects.toThrow("3× 至 30×");
+  await expect(
+    placePerpOrder(db, 1, { ...open(), leverage: 3 }, market(2))
+  ).rejects.toThrow("低于本站最低杠杆");
+  const fill = await placePerpOrder(
+    db,
+    1,
+    { ...open(), leverage: 37 },
+    market(100)
+  );
+  expect(fill).toMatchObject({ leverage: 37 });
+  expect(getPerpAccount(db, 1).positions[0]).toMatchObject({
+    leverage: 37,
+    marginUnits: 2703,
+  });
+  savePerpConfig(db, { ...config, minLeverage: 1, maxLeverage: 10 });
+  expect(getPerpAccount(db, 1).positions[0].leverage).toBe(37);
+  await expect(
+    placePerpOrder(db, 1, { ...open(), leverage: 37 }, market(100))
+  ).rejects.toThrow("1× 至 10×");
+  expect(await placePerpOrder(db, 1, close(), market(10))).toMatchObject({
+    action: "close",
+    leverage: 37,
+  });
+  expect(getPerpAccount(db, 1).positions).toEqual([]);
+  savePerpConfig(db, { ...config, minLeverage: 1, maxLeverage: 100 });
+  await expect(
+    placePerpOrder(
+      db,
+      1,
+      { ...open(), leverage: 100 },
+      async (ticker, accepted) => {
+        savePerpConfig(db, { ...config, minLeverage: 1, maxLeverage: 50 });
+        return market(100)(ticker, accepted);
+      }
+    )
+  ).rejects.toThrow("1× 至 50×");
+  savePerpConfig(db, { ...config, minLeverage: 1, maxLeverage: 100 });
+  expect(
+    await placePerpOrder(db, 1, { ...open(), leverage: 100 }, market(100))
+  ).toMatchObject({ leverage: 100 });
 });
 it("redeems free cash and charges the exact fee without doubling a retried exchange", () => {
   expect(getPerpAccount(db, 1).cashUnits).toBe(0);
@@ -239,6 +294,11 @@ it("awards income XP only on net redemptions above outstanding principal", async
   convert(1, "in", 1_000_000);
   await order(open(), 100_000);
   await order(close(), 400_000);
+  expect(previewPerpExchangeForUser(db, 1, "in", 100_000).estimatedExp).toBe(0);
+  expect(previewPerpExchangeForUser(db, 1, "out", 1_000_000)).toMatchObject({
+    netUnits: 950_000,
+    estimatedExp: 0,
+  });
   convert(1, "out", 1_000_000); // net 950,000, still short of principal
   const events = () =>
     db
@@ -250,6 +310,15 @@ it("awards income XP only on net redemptions above outstanding principal", async
   expect(events()).toEqual([]);
   // Simulate the first exchange after upgrading an account with existing history.
   db.prepare("DELETE FROM perp_exp_basis WHERE user_id=1").run();
+  const quote = previewPerpExchangeForUser(db, 1, "out", 200_000);
+  expect(quote).toMatchObject({ netUnits: 190_000, estimatedExp: 14 });
+  expect(events()).toEqual([]);
+  expect(
+    db
+      .prepare("SELECT principal_units FROM perp_exp_basis WHERE user_id=1")
+      .pluck()
+      .get()
+  ).toBeUndefined();
   const key = randomUUID();
   convert(1, "out", 200_000, key); // net 190,000: 50,000 principal and 140,000 income
   convert(1, "out", 200_000, key);
@@ -263,6 +332,30 @@ it("awards income XP only on net redemptions above outstanding principal", async
   convert(1, "in", 100_000); // new deposit cannot be counted as previously earned profit
   convert(1, "out", 100_000);
   expect(events()).toEqual([140_000]);
+});
+it("accounts for accumulated fractional EXP without awarding it until redemption", () => {
+  // Existing trading gains and a half point of EXP accumulated from other activity.
+  db.prepare(
+    "INSERT INTO perp_wallets(user_id,cash_units) VALUES (1,100000)"
+  ).run();
+  db.prepare(
+    "INSERT INTO level_profiles(user_id,total_exp,exp_remainder) VALUES (1,7,500000)"
+  ).run();
+  const preview = () => previewPerpExchangeForUser(db, 1, "out", 6_000);
+  expect(preview()).toMatchObject({ netUnits: 5700, estimatedExp: 1 });
+  expect(preview().estimatedExp).toBe(1);
+  expect(
+    db.prepare("SELECT count(*) FROM experience_events").pluck().get()
+  ).toBe(0);
+  convert(1, "out", 6_000);
+  expect(
+    db
+      .prepare(
+        "SELECT total_exp, exp_remainder FROM level_profiles WHERE user_id=1"
+      )
+      .get()
+  ).toEqual({ total_exp: 8, exp_remainder: 70000 });
+  expect(preview().estimatedExp).toBe(0);
 });
 it("never converts temporary credit and rolls back a failed dual-ledger write", () => {
   db.prepare(
@@ -325,10 +418,12 @@ it("locks only isolated margin, charges both sides, and closes longs against bid
 it("rejects a pending open when its contract becomes close-only before the price arrives", async () => {
   convert(1, "in", 200_000);
   const before = getPerpAccount(db, 1);
-  await expect(placePerpOrder(db, 1, open(), async (ticker, at) => {
-    savePerpConfig(db, {...config, closeOnlySymbols:[ticker]});
-    return feed()(ticker, at);
-  })).rejects.toThrow("暂停开仓");
+  await expect(
+    placePerpOrder(db, 1, open(), async (ticker, at) => {
+      savePerpConfig(db, { ...config, closeOnlySymbols: [ticker] });
+      return feed()(ticker, at);
+    })
+  ).rejects.toThrow("暂停开仓");
   expect(getPerpAccount(db, 1)).toEqual(before);
 });
 it("rechecks aggregate user/platform risk and open switch inside settlement, permits reduce-only exits", async () => {

@@ -12,6 +12,7 @@ import { SiteNav } from "@/components/SiteNav";
 import { usePerpPresence } from "./usePerpPresence";
 import { useMe } from "@/hooks/useMe";
 import { PerpChart } from "./PerpChart";
+import { PerpRules } from "./PerpRules";
 import { PendingOrders } from "./PendingOrders";
 import { ExchangeForm, TradeForm } from "./PerpForms";
 import {
@@ -292,9 +293,7 @@ export default function Perps() {
             <h1 className="text-3xl font-black text-[#fce1b6]">
               USDT 永续合约
             </h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Bybit 公开行情 · 24 小时模拟交易 · 逐仓保证金
-            </p>
+            <PerpRules config={wallet?.config} />
           </div>
           <nav aria-label="合约社区" className="flex flex-wrap gap-2">
             <Link className={button} to="/contracts/square">
@@ -412,9 +411,14 @@ export default function Perps() {
                     正在读取 {interval} 分钟 K 线…
                   </p>
                 )}
-                {current.readOnlyReason && (
-                  <p className="mt-3 text-sm">{current.readOnlyReason}</p>
-                )}
+                <p
+                  role="status"
+                  className={
+                    current.readOnlyReason ? "mt-3 text-sm" : undefined
+                  }
+                >
+                  {current.readOnlyReason}
+                </p>
               </>
             ) : (
               market.isFetching && <p>正在读取行情…</p>

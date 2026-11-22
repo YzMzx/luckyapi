@@ -1,5 +1,6 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { trpc } from "@/providers/trpc";
+import { getPerpLeverageRange } from "@contracts/perp-leverage";
 import {
   baseCoin,
   button,
@@ -8,6 +9,7 @@ import {
   input,
   orderLabel,
   panel,
+  signed,
   sim,
   time,
   type PerpApi,
@@ -22,7 +24,6 @@ import {
 
 type OpenAction = "openLong" | "openShort";
 type Action = OpenAction | "close";
-type Leverage = 1 | 2 | 5;
 type Mode = "market" | "limit" | "conditionalMarket" | "conditionalLimit";
 const modes = {
   market: "市价单",
@@ -43,7 +44,7 @@ type Intent = {
   symbol: string;
   action: Action;
   quantityAtoms: number;
-  leverage?: Leverage;
+  leverage?: number;
   requestKey: string;
   terms: Terms;
 };
@@ -68,7 +69,8 @@ export function TradeForm({
       pos?.side === "short" ? "openShort" : "openLong"
     ),
     [mode, setMode] = useState<Mode>("market"),
-    [lev, setLev] = useState<Leverage>(1);
+    [leverageText, setLeverageText] = useState<string | null>(null),
+    [leverageChecked, setLeverageChecked] = useState(false);
   const [qty, setQty] = useState(""),
     [limit, setLimit] = useState(""),
     [trigger, setTrigger] = useState("");
@@ -88,6 +90,9 @@ export function TradeForm({
     direct = trpc.perps.placeOrder.useMutation(),
     pending = trpc.perps.createPending.useMutation();
   const busy = direct.isPending || pending.isPending;
+  const blockedReasonId = useId(),
+    leverageId = useId(),
+    leverageHelpId = useId();
   const unit = baseCoin(market.symbol),
     closing = variant === "close",
     action: Action = closing ? "close" : openAction,
@@ -95,13 +100,34 @@ export function TradeForm({
   const conditional =
       mode === "conditionalLimit" || mode === "conditionalMarket",
     priced = mode === "conditionalLimit" || mode === "limit";
-  const leverage = (pos?.leverage ?? lev) as Leverage,
-    canOpen =
-      market.tradingEnabled &&
-      account.tradingEnabled &&
-      account.config.symbols.some(
-        s => s.symbol === market.symbol && s.openEnabled
-      );
+  const range = spec
+    ? getPerpLeverageRange(account.config, spec.maxLeverage)
+    : null;
+  const rangeAvailable = !!range && range.max >= range.min;
+  // Follow the configured minimum until the player explicitly enters a value.
+  // Preserve that value across market/config refreshes rather than silently changing risk.
+  const leverageValue = pos
+    ? String(pos.leverage)
+    : (leverageText ?? (rangeAvailable ? String(range.min) : ""));
+  const leverage = Number(leverageValue);
+  const leverageProblem =
+    closing || !range
+      ? ""
+      : !rangeAvailable
+        ? `Bybit 合约杠杆上限 ${range.max}× 低于站内最低杠杆 ${range.min}×，不支持开仓或加仓。`
+        : !Number.isInteger(leverage) ||
+            leverage < range.min ||
+            leverage > range.max
+          ? pos
+            ? `当前持仓杠杆 ${leverage}× 不在允许范围 ${range.min}×–${range.max}× 内，只能平仓，不能加仓。`
+            : `请输入 ${range.min} 至 ${range.max} 的整数杠杆。`
+          : "";
+  const canOpen =
+    market.tradingEnabled &&
+    account.tradingEnabled &&
+    account.config.symbols.some(
+      s => s.symbol === market.symbol && s.openEnabled
+    );
   const limitUnits = decimalUnits(limit, 3),
     triggerUnits = decimalUnits(trigger, 3),
     atoms = decimalUnits(qty, 8);
@@ -134,14 +160,16 @@ export function TradeForm({
   const baseProblem =
     !quote || !spec
       ? market.readOnlyReason || "等待可用盘口和合约规格"
-      : !closing && !canOpen
-        ? "当前暂停开仓，已有仓位可平仓"
-        : closing && !pos
-          ? "当前没有可平仓位"
-          : !closing && pos && (action === "openLong") !== (pos.side === "long")
-            ? "请先平掉反向仓位"
-            : !closing && leverage > spec.maxLeverage
-              ? "杠杆超过合约允许范围"
+      : leverageProblem
+        ? leverageProblem
+        : !closing && !canOpen
+          ? "当前暂停开仓，已有仓位可平仓"
+          : closing && !pos
+            ? "当前没有可平仓位"
+            : !closing &&
+                pos &&
+                (action === "openLong") !== (pos.side === "long")
+              ? "请先平掉反向仓位"
               : priced && (!limitUnits || limitUnits % spec.tickSizeUnits !== 0)
                 ? "请输入符合报价步长的限价"
                 : conditional &&
@@ -155,6 +183,9 @@ export function TradeForm({
                     : "";
   const problem =
     baseProblem ||
+    (intent && !closing && intent.leverage !== leverage
+      ? "杠杆已变化，请返回修改并重新核对委托。"
+      : "") ||
     (!atoms
       ? "请输入数量或选择比例"
       : spec && atoms % spec.qtyStepUnits !== 0
@@ -168,6 +199,12 @@ export function TradeForm({
                   BigInt(spec.minNotionalUnits))
             ? "数量或名义价值低于合约下限"
             : "");
+  const showLeverageError =
+    rangeAvailable && !pos && !!leverageProblem && leverageChecked;
+  const visibleProblem =
+    rangeAvailable && !pos && problem === leverageProblem && !showLeverageError
+      ? ""
+      : problem;
   const percentage =
     selectedPct ??
     (max > 0 ? Math.min(100, Math.round((atoms / max) * 100)) : 0);
@@ -187,7 +224,54 @@ export function TradeForm({
     account.config.takerFeeBps,
     account.config.maintenanceMarginBps,
   ]);
-  const result = calculated?.context === context ? calculated : null;
+  const result =
+    !leverageProblem && calculated?.context === context ? calculated : null;
+  const closeEstimate = result?.estimate.close;
+  const estimateTitle = closing ? "平仓预估" : "委托预估";
+  const estimateRows: [string, string | null][] = closing
+    ? [
+        [
+          "平仓数量",
+          result ? coin(result.estimate.quantityAtoms) + " " + unit : null,
+        ],
+        ["参考平仓价", result ? sim(result.reference) + " USDT" : null],
+        [
+          "释放保证金",
+          closeEstimate
+            ? sim(closeEstimate.releasedMarginUnits) + " 模拟金"
+            : null,
+        ],
+        [
+          "平仓手续费",
+          result ? sim(result.estimate.feeUnits) + " 模拟金" : null,
+        ],
+        [
+          "平仓净盈亏",
+          closeEstimate ? signed(closeEstimate.netPnlUnits) + " 模拟金" : null,
+        ],
+        [
+          "预计到账",
+          closeEstimate ? sim(closeEstimate.payoutUnits) + " 模拟金" : null,
+        ],
+      ]
+    : [
+        [
+          "数量",
+          result ? coin(result.estimate.quantityAtoms) + " " + unit : null,
+        ],
+        [
+          "成本（保证金 + 手续费）",
+          result ? sim(result.estimate.costUnits) + " 模拟金" : null,
+        ],
+        [
+          "预估强平价",
+          result
+            ? result.estimate.liquidationPriceUnits === null
+              ? "不适用"
+              : sim(result.estimate.liquidationPriceUnits) + " USDT"
+            : null,
+        ],
+      ];
   function edit() {
     setCalculated(null);
     setIntent(null);
@@ -314,28 +398,44 @@ export function TradeForm({
           </label>
         )}
         {!closing && (
-          <label className="block">
-            杠杆
-            <select
+          <div>
+            <label htmlFor={leverageId}>杠杆（倍）</label>
+            <input
+              id={leverageId}
+              name="leverage"
               className={input}
-              value={leverage}
-              disabled={!!pos}
+              type="number"
+              inputMode="numeric"
+              required
+              min={rangeAvailable ? range.min : undefined}
+              max={rangeAvailable ? range.max : undefined}
+              step={1}
+              value={leverageValue}
+              disabled={!!pos || !rangeAvailable || !canOpen || !quote}
+              aria-describedby={
+                leverageProblem && visibleProblem === leverageProblem
+                  ? leverageHelpId + " " + blockedReasonId
+                  : leverageHelpId
+              }
+              aria-invalid={showLeverageError}
+              onBlur={() => setLeverageChecked(true)}
               onChange={e => {
                 edit();
-                setLev(Number(e.target.value) as Leverage);
+                setLeverageText(e.target.value);
               }}
+            />
+            <p
+              id={leverageHelpId}
+              className="mt-1 text-xs text-muted-foreground"
             >
-              {account.config.allowedLeverage.map(v => (
-                <option
-                  key={v}
-                  value={v}
-                  disabled={!!spec && v > spec.maxLeverage}
-                >
-                  {v}×
-                </option>
-              ))}
-            </select>
-          </label>
+              {pos && "已有持仓的杠杆不可修改。"}
+              {rangeAvailable
+                ? `本品种允许 ${range.min}×–${range.max}× 的整数杠杆。`
+                : !range
+                  ? "等待合约规格，暂不可选择杠杆。"
+                  : "本品种暂无可用杠杆。"}
+            </p>
+          </div>
         )}
         {conditional && (
           <>
@@ -437,47 +537,31 @@ export function TradeForm({
         )}
       </fieldset>
       <section
-        aria-label="委托预估"
+        aria-label={estimateTitle}
         className="my-4 rounded-lg border border-border p-3"
       >
         <div className="flex items-center justify-between gap-2">
-          <h3 className="font-semibold">委托预估</h3>
+          <h3 className="font-semibold">{estimateTitle}</h3>
           <button
             type="button"
             onClick={calculate}
             className={button}
             disabled={!!problem || busy || !!intent}
           >
-            {result ? "重新计算" : "计算"}
+            {result ? "重新计算" : closing ? "计算收益" : "计算"}
           </button>
         </div>
-        <dl className="mt-2 space-y-1 text-sm tabular-nums" aria-live="polite">
-          <div className="flex justify-between gap-2">
-            <dt>数量</dt>
-            <dd>
-              {result
-                ? coin(result.estimate.quantityAtoms) + " " + unit
-                : "计算"}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-2">
-            <dt>
-              {closing ? "成本（平仓手续费）" : "成本（保证金 + 手续费）"}
-            </dt>
-            <dd>
-              {result ? sim(result.estimate.costUnits) + " 模拟金" : "计算"}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-2">
-            <dt>预估强平价</dt>
-            <dd>
-              {result
-                ? result.estimate.liquidationPriceUnits === null
-                  ? "不适用"
-                  : sim(result.estimate.liquidationPriceUnits) + " USDT"
-                : "计算"}
-            </dd>
-          </div>
+        <dl
+          className="mt-2 space-y-1 text-sm tabular-nums"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {estimateRows.map(([label, value]) => (
+            <div key={label} className="flex justify-between gap-2">
+              <dt>{label}</dt>
+              <dd>{value ?? "计算"}</dd>
+            </div>
+          ))}
         </dl>
         {result && (
           <p className="mt-2 text-xs text-muted-foreground">
@@ -490,6 +574,8 @@ export function TradeForm({
                   ? "卖一价"
                   : "买一价"}{" "}
             {sim(result.reference)} USDT 计算，不锁定成交价。
+            {closing &&
+              " 净盈亏已扣本次平仓费，不重复计入已结算的开仓费或资金费。"}
           </p>
         )}
       </section>
@@ -502,8 +588,10 @@ export function TradeForm({
               (priced ? "限价等待成交。" : "当时的盘口模拟市价成交。")}
         {mode !== "market" && " 挂单不预冻结资金或仓位，成交时重新校验。"}
       </p>
-      {problem && (
-        <p className="mt-2 text-sm text-muted-foreground">{problem}</p>
+      {visibleProblem && (
+        <p id={blockedReasonId} className="mt-2 text-sm text-muted-foreground">
+          {visibleProblem}
+        </p>
       )}
       {intent && (
         <p className="mt-3 rounded border border-border p-2 text-sm text-[#ffd473]">
@@ -522,7 +610,18 @@ export function TradeForm({
         </p>
       )}
       <div className="mt-4 flex flex-wrap gap-2">
-        <button className={button} disabled={!!problem || busy}>
+        <button
+          className={button}
+          disabled={!!problem || busy}
+          aria-describedby={
+            visibleProblem
+              ? blockedReasonId
+              : problem
+                ? leverageHelpId
+                : undefined
+          }
+          type="submit"
+        >
           {busy ? "提交中…" : intent ? "确认提交" : "核对委托"}
         </button>
         {intent && (

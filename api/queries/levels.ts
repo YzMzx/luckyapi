@@ -136,6 +136,29 @@ export function awardExperienceInTransaction(
   return applyAward(tx, userId, eventKey, amount, 0, null);
 }
 
+function usdExperienceParts(units: number, source: keyof typeof EXP_PER_USD) {
+  const unitsPerExp = MONEY_SCALE / EXP_PER_USD[source];
+  return {
+    wholeExp: Math.floor(units / unitsPerExp),
+    fractionalUnits: (units % unitsPerExp) * EXP_PER_USD[source],
+  };
+}
+
+/** Predict the whole EXP credited by a USD award without updating the profile. */
+export function previewUsdExperience(
+  db: Pick<ReturnType<typeof getDb>, "select">,
+  userId: number,
+  units: number,
+  source: keyof typeof EXP_PER_USD
+) {
+  if (units === 0) return 0;
+  const { wholeExp, fractionalUnits } = usdExperienceParts(units, source);
+  const { expRemainder } = readProfile(db, userId);
+  return (
+    wholeExp + Math.floor(((expRemainder ?? 0) + fractionalUnits) / MONEY_SCALE)
+  );
+}
+
 export function awardUsdExperience(
   tx: AwardDb,
   userId: number,
@@ -145,13 +168,13 @@ export function awardUsdExperience(
 ) {
   const units = unitsFromMoney(usdAmount);
   if (units <= 0) throw new Error("奖励金额必须为正数");
-  const unitsPerExp = MONEY_SCALE / EXP_PER_USD[source];
+  const { wholeExp, fractionalUnits } = usdExperienceParts(units, source);
   return applyAward(
     tx,
     userId,
     `${source}:${eventKey}`,
-    Math.floor(units / unitsPerExp),
-    (units % unitsPerExp) * EXP_PER_USD[source],
+    wholeExp,
+    fractionalUnits,
     units
   );
 }

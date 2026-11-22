@@ -2,6 +2,7 @@ import { z } from "zod";
 import { memberQuery } from "../auth";
 import { getDb } from "../queries/connection";
 import { paginationInput, resolvePagination } from "../pagination";
+import { perpSymbolSchema } from "../perp/config";
 
 const onlineWindow = 90_000;
 export const perpHeartbeat = memberQuery.mutation(({ ctx }) => {
@@ -15,26 +16,41 @@ export const perpHeartbeat = memberQuery.mutation(({ ctx }) => {
 });
 // This member projection intentionally excludes identifiers, balances and exact activity times.
 export const positionSquare = memberQuery
-  .input(paginationInput.extend({ onlineOnly: z.boolean().default(false) }))
+  .input(
+    paginationInput.extend({
+      onlineOnly: z.boolean().default(false),
+      symbol: perpSymbolSchema.optional(),
+    })
+  )
   .query(({ ctx, input }) => {
     const db = getDb().$client;
     const cutoff = Date.now() - onlineWindow;
     const from =
       " FROM perp_positions p JOIN users u ON u.id=p.user_id LEFT JOIN perp_presence s ON s.user_id=p.user_id WHERE p.quantity_atoms>0 AND u.banned=0 AND u.group_name IS NOT NULL";
     return db.transaction(() => {
+      // Keep all visible contracts selectable even while a single contract or online players are selected.
+      const categories = db
+        .prepare(
+          "SELECT p.symbol, count(*) AS total" +
+            from +
+            " GROUP BY p.symbol ORDER BY p.symbol"
+        )
+        .all() as { symbol: string; total: number }[];
+      const scopedFrom = from + (input.symbol ? " AND p.symbol=?" : "");
+      const scopeArgs = input.symbol ? [input.symbol] : [];
       const onlineHolders = Number(
         db
           .prepare(
-            "SELECT count(DISTINCT p.user_id)" + from + " AND s.seen_at>?"
+            "SELECT count(DISTINCT p.user_id)" + scopedFrom + " AND s.seen_at>?"
           )
           .pluck()
-          .get(cutoff)
+          .get(...scopeArgs, cutoff)
       );
       const filter = input.onlineOnly ? " AND s.seen_at>?" : "",
-        args = input.onlineOnly ? [cutoff] : [];
+        args = input.onlineOnly ? [...scopeArgs, cutoff] : scopeArgs;
       const total = Number(
         db
-          .prepare("SELECT count(*)" + from + filter)
+          .prepare("SELECT count(*)" + scopedFrom + filter)
           .pluck()
           .get(...args)
       );
@@ -56,7 +72,7 @@ export const positionSquare = memberQuery
       const rows = db
         .prepare(
           "SELECT u.group_name AS nickname,p.symbol,p.side,p.quantity_atoms AS quantityAtoms,p.entry_units AS entryUnits,p.leverage,COALESCE(s.seen_at>?,0) AS online,p.user_id=? AS mine" +
-            from +
+            scopedFrom +
             filter +
             " ORDER BY p.updated_at DESC,p.user_id,p.symbol LIMIT ? OFFSET ?"
         )
@@ -73,6 +89,14 @@ export const positionSquare = memberQuery
         online: !!r.online,
         mine: !!r.mine,
       }));
-      return { items, onlineHolders, page, pageSize, totalPages, total };
+      return {
+        items,
+        categories,
+        onlineHolders,
+        page,
+        pageSize,
+        totalPages,
+        total,
+      };
     })();
   });

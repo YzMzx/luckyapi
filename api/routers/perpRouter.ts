@@ -9,16 +9,24 @@ import { memberQuery } from "../auth";
 import { createRouter } from "../middleware";
 import { getDb } from "../queries/connection";
 import { readControlState, readUserPolicy } from "../queries/policies";
-import { readPerpConfig, perpSymbolSchema as symbol } from "../perp/config";
+import {
+  readPerpConfig,
+  perpLeverageSchema,
+  perpSymbolSchema as symbol,
+} from "../perp/config";
 import {
   exchangePerp,
   getPerpAccount,
   PerpRuleError,
   PerpExchangeQuoteChanged,
   placePerpOrder,
-  previewPerpExchange,
+  previewPerpExchangeForUser,
 } from "../perp/engine";
-import { getPerpMarket, getPerpQuote, getPerpInstrument } from "../perp/market";
+import {
+  getPerpMarket,
+  getPerpQuoteStatus,
+  getPerpInstrument,
+} from "../perp/market";
 import {
   createPending,
   cancelPending,
@@ -43,7 +51,7 @@ const baseOrder = z.object({
   symbol,
   action: z.enum(["openLong", "openShort", "close"]),
   quantityAtoms: units,
-  leverage: z.union([z.literal(1), z.literal(2), z.literal(5)]).optional(),
+  leverage: perpLeverageSchema.optional(),
   requestKey,
 });
 const trigger = {
@@ -70,10 +78,11 @@ async function loadSnapshot(
   ticker: string,
   afterMs?: number
 ) {
-  const [q, i] = await Promise.all([
-    getPerpQuote(db, ticker, afterMs),
+  const [{ quote: q, readOnlyReason }, i] = await Promise.all([
+    getPerpQuoteStatus(db, ticker, afterMs),
     getPerpInstrument(db, ticker),
   ]);
+  if (readOnlyReason) throw new PerpRuleError(readOnlyReason);
   return q && i
     ? {
         ...q,
@@ -150,12 +159,13 @@ export const perpRouter = createRouter({
   }),
   exchangePreview: memberQuery
     .input(exchangeInput)
-    .query(({ input }) =>
+    .query(({ ctx, input }) =>
       applyRule(() =>
-        previewPerpExchange(
+        previewPerpExchangeForUser(
+          getDb().$client,
+          ctx.user.id,
           input.direction,
-          input.amountUnits,
-          readPerpConfig(getDb().$client)
+          input.amountUnits
         )
       )
     ),

@@ -178,6 +178,40 @@ describe("client order estimates in integer exchange units", () => {
     });
     expect(estimateOrder({ ...c, priceUnits: 50_000 }, coin / 2)).toBeNull();
   });
+  it.each([
+    ["long", 105_000, coin, 20_000, 63, 4_937, 24_937],
+    ["long", 95_000, coin / 2, 10_000, 29, -2_529, 7_471],
+    ["short", 95_000, coin, 20_000, 57, 4_943, 24_943],
+    ["short", 110_000, coin / 2, 10_000, 33, -5_033, 4_967],
+    ["long", 50_000, coin, 20_000, 0, -20_000, 0],
+    ["long", 80_001, coin, 20_000, 1, -20_000, 0],
+  ] as const)(
+    "estimates %s closing at %i with quantity %i",
+    (
+      side,
+      priceUnits,
+      quantity,
+      releasedMarginUnits,
+      feeUnits,
+      netPnlUnits,
+      payoutUnits
+    ) => {
+      expect(
+        estimateOrder(
+          {
+            ...config,
+            action: "close",
+            position: { ...prev, side },
+            priceUnits,
+          },
+          quantity
+        )
+      ).toMatchObject({
+        feeUnits,
+        close: { releasedMarginUnits, netPnlUnits, payoutUnits },
+      });
+    }
+  );
   it("can reduce a remainder smaller than the opening minimum", () => {
     const c: EstimateInput = {
       ...config,

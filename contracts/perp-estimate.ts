@@ -82,6 +82,11 @@ export type EstimateResult = {
   costUnits: number;
   /** Estimated post-fill position. No liquidation price for a fully closed or fully collateralized position. */
   liquidationPriceUnits: number | null;
+  close: {
+    releasedMarginUnits: number;
+    netPnlUnits: number;
+    payoutUnits: number;
+  } | null;
 };
 function valid(c: EstimateInput) {
   const p = c.position;
@@ -216,13 +221,23 @@ export function estimateOrder(
     margin = BigInt(p?.marginUnits ?? 0),
     entry = BigInt(p?.entryNotionalUnits ?? 0),
     fee = a.fee;
+  let close: EstimateResult["close"] = null;
   if (c.action === "close") {
     const released = (margin * qty) / remainingQty,
       releasedBasis = (entry * qty) / remainingQty;
     const equity =
       released + (p!.side === "long" ? 1n : -1n) * (a.notional - releasedBasis);
     if (qty < remainingQty && equity <= 0n) return null;
-    fee = min(fee, equity > 0n ? equity : 0n);
+    // Mirror settlement: an isolated position cannot debit the rest of the wallet.
+    if (equity > SAFE || equity < -SAFE) return null;
+    const availableEquity = equity > 0n ? equity : 0n;
+    fee = min(fee, availableEquity);
+    const payout = availableEquity - fee;
+    close = {
+      releasedMarginUnits: Number(released),
+      netPnlUnits: Number(payout - released),
+      payoutUnits: Number(payout),
+    };
     remainingQty -= qty;
     margin -= released;
     entry -= releasedBasis;
@@ -249,6 +264,7 @@ export function estimateOrder(
     marginUnits: Number(a.margin),
     feeUnits: Number(fee),
     costUnits: Number(a.margin + fee),
+    close,
     liquidationPriceUnits: liquidation(
       p ? p.side === "long" : c.action === "openLong",
       remainingQty,

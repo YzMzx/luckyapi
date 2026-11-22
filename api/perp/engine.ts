@@ -8,12 +8,15 @@ import {
   expireUserCreditGrants,
 } from "../queries/credit-grants";
 import { applyPerpCashFlow } from "@contracts/perp-income";
+import { isValidPerpLeverage } from "@contracts/perp-leverage";
 import { recordTx } from "../queries/ledger";
+import { previewUsdExperience } from "../queries/levels";
 import {
   MAINTENANCE_MARGIN_BPS,
   TAKER_FEE_BPS,
   readPerpConfig,
   perpSymbolSchema,
+  openLeverageProblem,
 } from "./config";
 
 export class PerpRuleError extends Error {}
@@ -211,13 +214,7 @@ export function previewPerpExchange(
     redemptionFeeBps: rules.redemptionFeeBps,
   };
 }
-// Called only inside the exchange transaction, after the idempotency check.
-function advanceExpBasis(
-  db: Db,
-  user: number,
-  direction: Direction,
-  creditUnits: number
-) {
+function readExpBasis(db: Db, user: number) {
   let principal = db
     .prepare<[number], number>(
       "SELECT principal_units FROM perp_exp_basis WHERE user_id=?"
@@ -238,7 +235,50 @@ function advanceExpBasis(
         row.credit_units
       ).principal;
   }
-  const next = applyPerpCashFlow(principal, direction, creditUnits);
+  return principal;
+}
+
+export function previewPerpExchangeForUser(
+  db: Db,
+  user: number,
+  direction: Direction,
+  amountUnits: number
+) {
+  return db.transaction(() => {
+    const value = previewPerpExchange(
+      direction,
+      amountUnits,
+      readPerpConfig(db)
+    );
+    const incomeUnits =
+      direction === "out"
+        ? applyPerpCashFlow(readExpBasis(db, user), "out", value.netUnits)
+            .income
+        : 0;
+    return {
+      ...value,
+      estimatedExp: previewUsdExperience(
+        drizzle(db, { schema }),
+        user,
+        incomeUnits,
+        "income"
+      ),
+    };
+  })();
+}
+
+// Called only inside the exchange transaction, after the idempotency check.
+function advanceExpBasis(
+  db: Db,
+  user: number,
+  direction: Direction,
+  creditUnits: number
+) {
+  const next = applyPerpCashFlow(
+    readExpBasis(db, user),
+    direction,
+    creditUnits
+  );
   db.prepare(
     "INSERT INTO perp_exp_basis(user_id,principal_units) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET principal_units=excluded.principal_units"
   ).run(user, next.principal);
@@ -630,8 +670,8 @@ export function fillOrder(
     fail("当前合约已暂停开仓");
   const side = input.action === "openLong" ? "long" : "short",
     leverage = input.leverage ?? 1;
-  if (leverage > (q.maxLeverage ?? 5) || ![1, 2, 5].includes(leverage))
-    fail("当前杠杆无效");
+  const leverageProblem = openLeverageProblem(cfg, leverage, q.maxLeverage);
+  if (leverageProblem) fail(leverageProblem);
   if (p && (p.side !== side || p.leverage !== leverage))
     fail("请先平仓再切换方向或杠杆");
   const price = side === "long" ? q.askUnits : q.bidUnits,
@@ -715,7 +755,7 @@ export async function placePerpOrder(
   if (
     input.action === "close"
       ? input.leverage !== undefined
-      : ![1, 2, 5].includes(input.leverage ?? 1)
+      : !isValidPerpLeverage(input.leverage ?? 1)
   )
     fail("无效的杠杆参数");
   const existing = replay(db, user, input);
@@ -724,19 +764,24 @@ export async function placePerpOrder(
   const cfg = readPerpConfig(db);
   const listed = cfg.symbols.find(s => s.symbol === input.symbol);
   if (!listed) fail("该合约未开放");
-  if (input.action !== "close" && (!cfg.tradingEnabled || !listed.openEnabled))
-    fail("当前合约已暂停开仓");
+  if (input.action !== "close") {
+    if (!cfg.tradingEnabled || !listed.openEnabled) fail("当前合约已暂停开仓");
+    const leverageProblem = openLeverageProblem(cfg, input.leverage ?? 1);
+    if (leverageProblem) fail(leverageProblem);
+  }
   const accepted = Date.now();
-  let q: PerpSnapshot | null;
+  let q: PerpSnapshot | null = null;
+  let blocked: PerpRuleError | undefined;
   try {
     q = await feed(input.symbol, accepted);
-  } catch {
-    q = null;
+  } catch (error) {
+    if (error instanceof PerpRuleError) blocked = error;
   }
   const result = db
     .transaction(() => {
       const prior = replay(db, user, input);
       if (prior) return { order: prior };
+      if (blocked) throw blocked;
       if (
         !q ||
         q.symbol !== input.symbol ||

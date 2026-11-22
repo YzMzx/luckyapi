@@ -7,6 +7,7 @@ type Amounts = {
   netUnits: number;
 };
 export type ExchangeQuote = Amounts & {
+  estimatedExp: number;
   exchangeRate: number;
   redemptionFeeBps: number;
 };

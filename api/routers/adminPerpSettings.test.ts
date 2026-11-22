@@ -40,6 +40,8 @@ it("only lets administrators view and update Bybit perpetual simulation controls
     tradingEnabled: false,
     exchangeRate: 1500,
     redemptionFeeBps: 123,
+    minLeverage: 3,
+    maxLeverage: 100,
     userLimitUnits: 15000,
     platformLimitUnits: 20000,
   };
@@ -58,9 +60,14 @@ it("only lets administrators view and update Bybit perpetual simulation controls
   expect(await api.perpSettings.get()).toMatchObject({
     exchangeRate: 1000,
     redemptionFeeBps: 500,
+    minLeverage: 1,
+    maxLeverage: 5,
   });
   await expect(
     api.perpSettings.update({ ...edit, redemptionFeeBps: 10000 })
+  ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  await expect(
+    api.perpSettings.update({ ...edit, maxLeverage: 2 })
   ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   const result = await api.perpSettings.update(edit);
   expect(result).toEqual(await api.perpSettings.get());
@@ -69,6 +76,8 @@ it("only lets administrators view and update Bybit perpetual simulation controls
     tradingEnabled: false,
     exchangeRate: 1500,
     redemptionFeeBps: 123,
+    minLeverage: 3,
+    maxLeverage: 100,
     maintenanceMarginBps: 50,
     takerFeeBps: 6,
   });

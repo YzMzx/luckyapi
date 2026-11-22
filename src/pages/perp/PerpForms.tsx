@@ -149,11 +149,25 @@ export function ExchangeForm({ account }: { account: PerpApi["account"] }) {
       </p>
       {review && (
         <div role="status" className="mt-3 rounded-lg bg-[#182b3c] p-3 text-sm">
-          {display ? (
+          {display && quote ? (
             <>
               <p>扣除 {display.debit}</p>
               <p>手续费 {display.fee}</p>
-              <strong>实际到账 {display.received}</strong>
+              <p>
+                <strong>实际到账 {display.received}</strong>
+              </p>
+              {quote.direction === "out" && (
+                <>
+                  <p className="mt-1 font-semibold">
+                    预计获得经验 {quote.estimatedExp.toLocaleString("zh-CN")}{" "}
+                    EXP
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    扣除手续费并抵扣尚未收回的本金后，仅净盈利计经验。不足 1 EXP
+                    的部分会累计，实际以入账为准。
+                  </p>
+                </>
+              )}
             </>
           ) : (
             "正在计算兑换金额…"

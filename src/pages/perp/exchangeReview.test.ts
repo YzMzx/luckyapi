@@ -5,6 +5,7 @@ const initial = {
   amountUnits: 2_000_000,
   netUnits: 4_000_000,
   feeUnits: 0,
+  estimatedExp: 0,
   exchangeRate: 2000,
   redemptionFeeBps: 125,
 };
@@ -51,6 +52,7 @@ describe("user-confirmed exchange previews", () => {
       exchangeRate: 4000,
       feeUnits: 12_500,
       netUnits: 987_500,
+      estimatedExp: 97,
     };
     const reviewed = reviewReducer(next, {
       type: "finish",
@@ -63,6 +65,7 @@ describe("user-confirmed exchange previews", () => {
       amountUnits: 4_000_000,
       expectedExchangeRate: 4000,
     });
+    expect(reviewed.quote?.estimatedExp).toBe(97);
     expect(formatExchange(reviewed.quote!)).toEqual({
       debit: "4,000 模拟金",
       fee: "0.0125 余额",

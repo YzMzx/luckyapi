@@ -177,13 +177,17 @@ async function shared<T>(
   return job;
 }
 
+const tickerPhaseSchema = z.object({
+  symbol: z.string(),
+  curPreListingPhase: z.string().optional(),
+});
 const tickerSchema = z.object({
   symbol: z.string(),
   bid1Price: z.string(),
   ask1Price: z.string(),
   bid1Size: z.string(),
   ask1Size: z.string(),
-  curPreListingPhase: z.literal("").optional(),
+  curPreListingPhase: z.string().optional(),
   lastPrice: z.string(),
   markPrice: z.string(),
   nextFundingTime: z.string(),
@@ -192,27 +196,33 @@ const tickerSchema = z.object({
 function fresh(time: number) {
   return time <= Date.now() && Date.now() - time < 5_000;
 }
-export async function getPerpQuote(
+const phaseFinishedReason =
+  "Bybit 公共行情显示该合约盘前阶段已结束（Finished），本站暂不支持下单。";
+type QuoteStatus = { quote: PerpQuote | null; readOnlyReason: string | null };
+const unavailableQuote = { quote: null, readOnlyReason: null };
+
+export async function getPerpQuoteStatus(
   db: Db,
   symbol: string,
   afterMs?: number
-): Promise<PerpQuote | null> {
+): Promise<QuoteStatus> {
   requireSymbol(symbol);
   if (
     afterMs !== undefined &&
     (!Number.isSafeInteger(afterMs) || !fresh(afterMs))
   )
-    return null;
+    return unavailableQuote;
   const load = () =>
-    shared(db, "ticker:" + symbol, 350, async () => {
+    shared(db, "ticker:" + symbol, 350, async (): Promise<QuoteStatus> => {
       const { time, result } = await request(db, "tickers", symbol);
       requireData(result.list.length === 1 && fresh(time));
+      const phase = tickerPhaseSchema.parse(result.list[0]);
+      requireData(phase.symbol === symbol);
+      if (phase.curPreListingPhase === "Finished")
+        return { quote: null, readOnlyReason: phaseFinishedReason };
+      requireData(!phase.curPreListingPhase);
       const row = tickerSchema.parse(result.list[0]);
-      requireData(
-        row.symbol === symbol &&
-          units(row.bid1Size, 8) > 0 &&
-          units(row.ask1Size, 8) > 0
-      );
+      requireData(units(row.bid1Size, 8) > 0 && units(row.ask1Size, 8) > 0);
       const q = {
         symbol,
         asOf: time,
@@ -231,22 +241,28 @@ export async function getPerpQuote(
           q.nextFundingAt > time &&
           Math.abs(q.fundingRateE8) < 1e8
       );
-      return q;
+      return { quote: q, readOnlyReason: null };
     });
   // A fresh ticker alone cannot make a non-trading or pre-launch instrument executable.
-  if (!(await getPerpInstrument(db, symbol))) return null;
-  let quote = await load();
-  if (afterMs !== undefined && quote && quote.asOf <= afterMs) {
+  if (!(await getPerpInstrument(db, symbol))) return unavailableQuote;
+  let result = await load();
+  if (afterMs !== undefined && result?.quote && result.quote.asOf <= afterMs) {
     // Coalesce post-acceptance snapshots too, respecting the per-symbol pull interval.
     await new Promise(resolve => setTimeout(resolve, 360));
-    quote = await load();
+    result = await load();
   }
+  if (result?.readOnlyReason) return result;
+  const quote = result?.quote;
   return quote &&
     fresh(quote.asOf) &&
     quote.nextFundingAt > Date.now() &&
     (afterMs === undefined || quote.asOf > afterMs)
-    ? quote
-    : null;
+    ? { quote, readOnlyReason: null }
+    : unavailableQuote;
+}
+
+export async function getPerpQuote(db: Db, symbol: string, afterMs?: number) {
+  return (await getPerpQuoteStatus(db, symbol, afterMs)).quote;
 }
 const instrumentSchema = z.object({
   symbol: z.string(),
@@ -408,11 +424,13 @@ export async function getPerpMarket(
   if (!stock) throw new Error("合约未开放");
   const [history, raw, instrument] = await Promise.all([
     getBars(db, symbol, interval),
-    getPerpQuote(db, symbol),
+    getPerpQuoteStatus(db, symbol),
     getPerpInstrument(db, symbol),
   ]);
   const quote =
-    raw && fresh(raw.asOf) && raw.nextFundingAt > Date.now() ? raw : null;
+    raw.quote && fresh(raw.quote.asOf) && raw.quote.nextFundingAt > Date.now()
+      ? raw.quote
+      : null;
   return {
     ...stock,
     ...history,
@@ -420,7 +438,9 @@ export async function getPerpMarket(
     instrument,
     quote,
     readOnlyReason:
-      quote && instrument ? null : "暂无已确认的 Bybit 实时报价或合约规格",
+      quote && instrument
+        ? null
+        : (raw.readOnlyReason ?? "暂无已确认的 Bybit 实时报价或合约规格"),
   };
 }
 export async function getBoundaryMark(

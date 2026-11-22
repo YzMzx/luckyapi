@@ -7,7 +7,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("adds NVDAUSDT, runs a short, closes a close-only position, and archives trading PnL after removing the symbol", async () => {
+it("adds ANTUSDT, runs a short, closes a close-only position, and archives trading PnL after removing the symbol", async () => {
   vi.stubEnv("SQLITE_PATH", ":memory:");
   vi.useFakeTimers({ toFake: ["Date"] });
   const start = Date.parse("2026-11-21T17:00:00+08:00");
@@ -47,14 +47,17 @@ it("adds NVDAUSDT, runs a short, closes a close-only position, and archives trad
     code: "UNAUTHORIZED",
   });
   const ops = {
-    symbols: ["BTCUSDT", "ETHUSDT", "NVDAUSDT"],
+    symbols: ["BTCUSDT", "ETHUSDT", "ANTUSDT"],
     depositsEnabled: true,
     tradingEnabled: true,
+    minLeverage: 1,
+    maxLeverage: 100,
     userLimitUnits: 100_000_000,
     platformLimitUnits: 1_000_000_000,
   };
   let bid = 100_000_000,
     ask = 100_001_000;
+  let antPhase = "Finished";
   vi.stubGlobal("fetch", async (url: URL) => {
     expect(url.origin).toBe("https://api.bybit.com");
     vi.setSystemTime(Date.now() + 50);
@@ -92,6 +95,7 @@ it("adds NVDAUSDT, runs a short, closes a close-only position, and archives trad
           lastPrice: String(bid / 1000),
           fundingRate: "0.0001",
           nextFundingTime: String(start + 3600000),
+          curPreListingPhase: symbol === "ANTUSDT" ? antPhase : "",
         }
       : {
           symbol,
@@ -100,7 +104,8 @@ it("adds NVDAUSDT, runs a short, closes a close-only position, and archives trad
           status: "Trading",
           settleCoin: "USDT",
           quoteCoin: "USDT",
-          priceFilter: { tickSize: "0.10" },
+          isPreListing: false,
+          priceFilter: { tickSize: symbol === "ANTUSDT" ? "0.01" : "0.10" },
           lotSizeFilter: {
             qtyStep: "0.001",
             minOrderQty: "0.001",
@@ -118,34 +123,37 @@ it("adds NVDAUSDT, runs a short, closes a close-only position, and archives trad
   });
   await expect(
     perps.placeOrder({
-      symbol: "NVDAUSDT",
+      symbol: "ANTUSDT",
       action: "openLong",
       quantityAtoms: 1_000_000,
       requestKey: randomUUID(),
     })
   ).rejects.toThrow("未开放");
-  expect(await settings.lookup({ symbol: "NVDAUSDT" })).toMatchObject({
-    symbol: "NVDAUSDT",
+  expect(await settings.lookup({ symbol: "ANTUSDT" })).toMatchObject({
+    symbol: "ANTUSDT",
     qtyStepUnits: 100_000,
   });
   await settings.update(ops);
   expect(await perps.symbols()).toContainEqual(
-    expect.objectContaining({ symbol: "NVDAUSDT", openEnabled: true })
+    expect.objectContaining({ symbol: "ANTUSDT", openEnabled: true })
   );
-  const defaultMarket = await perps.market({ symbol: "NVDAUSDT" });
+  const defaultMarket = await perps.market({ symbol: "ANTUSDT" });
   expect(defaultMarket).toMatchObject({
     interval: 1,
     bars: [{ complete: false }],
+    quote: null,
+    readOnlyReason: expect.stringContaining("Finished"),
   });
-  const wider = await perps.market({ symbol: "NVDAUSDT", interval: 5 });
+  const wider = await perps.market({ symbol: "ANTUSDT", interval: 5 });
   expect(wider.interval).toBe(5);
   expect(wider.bars[0].endAt - defaultMarket.bars[0].endAt).toBe(4 * 60_000);
   await expect(
-    perps.market({ symbol: "NVDAUSDT", interval: 2 as 1 })
+    perps.market({ symbol: "ANTUSDT", interval: 2 as 1 })
   ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   vi.setSystemTime(Date.now() + 1100);
   const request = { direction: "in" as const, amountUnits: 5_000_000 };
   const prior = await perps.exchangePreview(request);
+  expect(prior.estimatedExp).toBe(0);
   const deposit = {
     ...request,
     expectedExchangeRate: 2000,
@@ -172,10 +180,10 @@ it("adds NVDAUSDT, runs a short, closes a close-only position, and archives trad
   await perps.exchange(deposit);
   await perps.exchange(deposit);
   const open = {
-    symbol: "NVDAUSDT",
+    symbol: "ANTUSDT",
     action: "openShort" as const,
     quantityAtoms: 1_000_000,
-    leverage: 5 as const,
+    leverage: 25,
     requestKey: randomUUID(),
   };
   // A limit order belongs to its submitting member and does not place an immediate market order.
@@ -185,6 +193,16 @@ it("adds NVDAUSDT, runs a short, closes a close-only position, and archives trad
     limitPriceUnits: bid + 1_000,
     requestKey: randomUUID(),
   };
+  const rejection = {
+    code: "BAD_REQUEST",
+    message: expect.stringContaining("Finished"),
+  };
+  await expect(perps.placeOrder(open)).rejects.toMatchObject(rejection);
+  await expect(perps.createPending(limit)).rejects.toMatchObject(rejection);
+  expect((await perps.account()).availableCashUnits).toBe(10_000_000);
+  expect(await perps.pendingOrders()).toHaveLength(0);
+  antPhase = "";
+  vi.setSystemTime(Date.now() + 1100);
   const receipt = await perps.createPending(limit);
   expect(receipt).toMatchObject({ status: "pending", orderType: "limit" });
   expect(await perps.createPending(limit)).toMatchObject({ id: receipt.id });
@@ -207,18 +225,30 @@ it("adds NVDAUSDT, runs a short, closes a close-only position, and archives trad
     .run();
   const otherPerps = caller("ld_session=" + otherToken).perps;
   expect(await otherPerps.pendingOrders()).toHaveLength(0);
+  antPhase = "Finished";
+  vi.setSystemTime(Date.now() + 1100);
+  expect(await perps.market({ symbol: "ANTUSDT" })).toMatchObject({
+    quote: null,
+    readOnlyReason: expect.stringContaining("Finished"),
+  });
   await expect(otherPerps.cancelPending({ id: receipt.id })).rejects.toThrow();
   expect(await perps.cancelPending({ id: receipt.id })).toMatchObject({
     status: "cancelled",
   });
   expect((await perps.account()).availableCashUnits).toBe(10_000_000);
   vi.setSystemTime(Date.now() + 1100);
+  antPhase = "";
   const fill = await perps.placeOrder(open);
-  expect(fill).toMatchObject({ side: "short", priceUnits: bid, feeUnits: 600 });
+  expect(fill).toMatchObject({
+    side: "short",
+    leverage: 25,
+    priceUnits: bid,
+    feeUnits: 600,
+  });
   expect(await perps.placeOrder(open)).toEqual(fill);
   expect(await perps.account()).toMatchObject({
-    availableCashUnits: 9_799_400,
-    frozenCashUnits: 200_000,
+    availableCashUnits: 9_959_400,
+    frozenCashUnits: 40_000,
   });
   await expect(
     settings.update({ ...ops, symbols: ["BTCUSDT", "ETHUSDT"] })

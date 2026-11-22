@@ -1,5 +1,11 @@
 import type Database from "better-sqlite3";
-import { readPerpConfig, perpSymbolSchema, TAKER_FEE_BPS } from "./config";
+import {
+  readPerpConfig,
+  perpSymbolSchema,
+  TAKER_FEE_BPS,
+  openLeverageProblem,
+} from "./config";
+import { isValidPerpLeverage } from "@contracts/perp-leverage";
 import {
   fillOrder,
   isFresh,
@@ -64,7 +70,7 @@ function valid(i: PendingInput) {
   if (
     i.action === "close"
       ? i.leverage !== undefined
-      : ![1, 2, 5].includes(i.leverage ?? 1)
+      : !isValidPerpLeverage(i.leverage ?? 1)
   )
     fail("杠杆参数无效");
   if (i.orderType === "limit") {
@@ -208,7 +214,12 @@ export function createPending(
           (position.side !== side || position.leverage !== leverage)
         )
           fail("请先平仓再切换方向或杠杆");
-        if (leverage > (snapshot.maxLeverage ?? 5)) fail("杠杆超出合约上限");
+        const leverageProblem = openLeverageProblem(
+          cfg,
+          leverage,
+          snapshot.maxLeverage
+        );
+        if (leverageProblem) fail(leverageProblem);
         const price = input.limitPriceUnits ?? input.triggerPriceUnits!;
         const value =
           (BigInt(price) * BigInt(input.quantityAtoms)) / 100000000n;

@@ -58,7 +58,8 @@ it("enables both Bybit public instruments without credentials and uses independe
     symbols: [{ symbol: "BTCUSDT" }, { symbol: "ETHUSDT" }],
     exchangeRate: 1000,
     redemptionFeeBps: 500,
-    allowedLeverage: [1, 2, 5],
+    minLeverage: 1,
+    maxLeverage: 5,
     takerFeeBps: 6,
     maintenanceMarginBps: 50,
   });
@@ -108,6 +109,26 @@ it("upgrades missing financial terms and does not reset them on partial or old u
     redemptionFeeBps: 0,
   });
 });
+it("persists leverage ranges and keeps them when older updates omit the fields", () => {
+  expect(
+    savePerpConfig(db, { ...edit, minLeverage: 3, maxLeverage: 100 })
+  ).toMatchObject({ minLeverage: 3, maxLeverage: 100 });
+  expect(readPerpConfig(db)).toMatchObject({
+    minLeverage: 3,
+    maxLeverage: 100,
+  });
+  expect(savePerpConfig(db, edit)).toMatchObject({
+    minLeverage: 3,
+    maxLeverage: 100,
+  });
+  expect(() => savePerpConfig(db, { ...edit, maxLeverage: 2 })).toThrow(
+    "最高杠杆不能低于最低杠杆"
+  );
+  expect(readPerpConfig(db)).toMatchObject({
+    minLeverage: 3,
+    maxLeverage: 100,
+  });
+});
 it.each([
   { exchangeRate: 0 },
   { exchangeRate: 1_000_001 },
@@ -132,6 +153,10 @@ it.each([
   { feedToken: "token" },
   { chartSource: "sina" },
   { allowedLeverage: [100] },
+  { minLeverage: 0 },
+  { maxLeverage: 101 },
+  { maxLeverage: 3.5 },
+  { minLeverage: 30, maxLeverage: 10 },
   { takerFeeBps: 0 },
   { maintenanceMarginBps: 0 },
   { userLimitUnits: 3.1 },
