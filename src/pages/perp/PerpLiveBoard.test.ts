@@ -44,7 +44,7 @@ beforeEach(() => {
   mocks.useMe.mockReturnValue({ user: { onboarded: true }, isLoading: false });
 });
 
-it("requires an onboarded session, uses presence and polls the profit board first", () => {
+it("requires an onboarded session, uses presence and polls the unified board", () => {
   render(snapshot);
   expect(mocks.useMe).toHaveBeenCalledWith({
     requireAuth: true,
@@ -52,7 +52,7 @@ it("requires an onboarded session, uses presence and polls the profit board firs
   });
   expect(mocks.usePresence).toHaveBeenLastCalledWith(true);
   expect(mocks.useQuery).toHaveBeenLastCalledWith(
-    { side: "profit", page: 1, pageSize: 20 },
+    { page: 1, pageSize: 20 },
     expect.objectContaining({ enabled: true, refetchInterval: 5000 })
   );
 
@@ -65,7 +65,7 @@ it("requires an onboarded session, uses presence and polls the profit board firs
   );
 });
 
-it("names the board and table, marks the current player's row and shows its selected-side rank", () => {
+it("names the board and table, marks the current player's row and shows its overall rank", () => {
   const html = render({
     ...snapshot,
     rows: [
@@ -82,26 +82,52 @@ it("names the board and table, marks the current player's row and shows its sele
     totalPages: 2,
   });
   expect(html).toContain("合约实时盈亏榜</h1>");
-  expect(html).toContain("实时盈利榜</h2>");
-  expect(html).toContain("实时盈利榜排名</caption>");
+  expect(html).toContain("实时排名</h2>");
+  expect(html).toContain("实时浮动盈亏排名</caption>");
   expect(html).toContain('scope="row"');
   expect(html).toContain("榜首玩家（我）");
   expect(html).toContain("+1.234 模拟金");
-  expect(html).toContain("盈利榜第 1 名");
+  expect(html).toContain("第 1 名");
   expect(html).toContain('aria-label="下一页"');
   expect(html).toContain('href="/contracts"');
   expect(html).toContain('href="/contracts/square"');
 });
 
-it("shows a side-specific empty state without inventing a rank for a negative total on the profit board", () => {
+it("shows positive, zero and negative totals in one table without separate controls", () => {
   const html = render({
     ...snapshot,
-    mine: { pnlUnits: -1500, rank: null, positionCount: 1 },
+    rows: [
+      {
+        nickname: "赢家",
+        pnlUnits: 4000,
+        rank: 1,
+        positionCount: 1,
+        mine: false,
+      },
+      {
+        nickname: "持平玩家",
+        pnlUnits: 0,
+        rank: 2,
+        positionCount: 1,
+        mine: false,
+      },
+      {
+        nickname: "亏损玩家",
+        pnlUnits: -1500,
+        rank: 3,
+        positionCount: 1,
+        mine: true,
+      },
+    ],
+    total: 3,
+    mine: { pnlUnits: -1500, rank: 3, positionCount: 1 },
   });
-  expect(html).toContain("当前盈利榜暂无排名。");
   expect(html).toContain("-1.5 模拟金");
-  expect(html).not.toContain("榜第");
-  expect(html).not.toContain("<table");
+  expect(html).toContain("第 3 名");
+  expect(html.indexOf("赢家")).toBeLessThan(html.indexOf("持平玩家"));
+  expect(html.indexOf("持平玩家")).toBeLessThan(html.indexOf("亏损玩家"));
+  expect(html).not.toMatch(/盈利榜|亏损榜/);
+  expect(render(snapshot)).toContain("当前暂无可估值持仓排名。");
 });
 
 it("distinguishes incomplete valuations, flat positions and no open positions", () => {

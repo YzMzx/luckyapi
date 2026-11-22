@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { memberQuery } from "../auth";
 import { paginationInput, resolvePagination } from "../pagination";
 import { getDb } from "../queries/connection";
@@ -17,11 +16,7 @@ type Player = {
 };
 
 export const perpLiveBoard = memberQuery
-  .input(
-    paginationInput.extend({
-      side: z.enum(["profit", "loss"]).default("profit"),
-    })
-  )
+  .input(paginationInput)
   .query(async ({ ctx, input }) => {
     const db = getDb().$client;
     // Read all eligible positions in one snapshot; aggregate before sorting or paging.
@@ -50,7 +45,6 @@ export const perpLiveBoard = memberQuery
       if (value) player.pnl += value.pnl;
       else player.incomplete = true;
     }
-    const profit = input.side === "profit";
     const candidates: {
       userId: number;
       nickname: string;
@@ -73,7 +67,7 @@ export const perpLiveBoard = memberQuery
           positionCount: player.positionCount,
         };
       if (!valid) pendingPlayers++;
-      else if (profit ? total > 0 : total < 0)
+      else
         candidates.push({
           userId,
           nickname: player.nickname,
@@ -81,11 +75,7 @@ export const perpLiveBoard = memberQuery
           positionCount: player.positionCount,
         });
     }
-    candidates.sort(
-      (a, b) =>
-        (profit ? b.pnlUnits - a.pnlUnits : a.pnlUnits - b.pnlUnits) ||
-        a.userId - b.userId
-    );
+    candidates.sort((a, b) => b.pnlUnits - a.pnlUnits || a.userId - b.userId);
     const total = candidates.length;
     const { page, pageSize, totalPages, offset } = resolvePagination(
       total,

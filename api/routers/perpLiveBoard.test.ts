@@ -112,15 +112,15 @@ it("ranks complete all-position totals before paging and never exposes private i
   vi.stubGlobal("fetch", fetchQuote);
   await expect(query(-1)({})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   expect(fetchQuote).not.toHaveBeenCalled();
-  const profit = await query(0)({ page: 2, pageSize: 1 });
-  expect(profit).toMatchObject({
-    total: 2,
+  const board = await query(0)({ page: 2, pageSize: 1 });
+  expect(board).toMatchObject({
+    total: 4,
     page: 2,
-    totalPages: 2,
+    totalPages: 4,
     pendingPlayers: 1,
     mine: { positionCount: 2, rank: 1, pnlUnits: 10_000 },
   });
-  expect(profit.rows).toEqual([
+  expect(board.rows).toEqual([
     {
       nickname: "玩家1",
       pnlUnits: 10_000,
@@ -137,16 +137,14 @@ it("ranks complete all-position totals before paging and never exposes private i
       ([u]) => u.searchParams.get("symbol") === "DOGEUSDT"
     )
   ).toBe(false);
-  const loss = await query(2)({ side: "loss" });
-  expect(loss.rows).toEqual([
-    {
-      nickname: "玩家2",
-      pnlUnits: -15_000,
-      positionCount: 1,
-      rank: 1,
-      mine: true,
-    },
+  const all = await query(2)({});
+  expect(all.rows.map(row => [row.pnlUnits, row.rank])).toEqual([
+    [10_000, 1],
+    [10_000, 1],
+    [0, 3],
+    [-15_000, 4],
   ]);
+  expect(all.mine).toEqual({ pnlUnits: -15_000, rank: 4, positionCount: 1 });
   expect((await query(3)({})).mine).toEqual({
     pnlUnits: null,
     rank: null,
@@ -154,7 +152,7 @@ it("ranks complete all-position totals before paging and never exposes private i
   });
   expect((await query(4)({})).mine).toEqual({
     pnlUnits: 0,
-    rank: null,
+    rank: 3,
     positionCount: 2,
   });
   expect((await query(5)({})).mine).toBeNull();

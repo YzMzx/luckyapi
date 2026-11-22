@@ -8,9 +8,6 @@ import { button, panel, signed, stamp } from "./format";
 import { Table } from "./shared";
 import { usePerpPresence } from "./usePerpPresence";
 
-const sides = { profit: "盈利榜", loss: "亏损榜" } as const;
-type Side = keyof typeof sides;
-
 const pnlColor = (units: number) =>
   units > 0 ? "text-emerald-300" : units < 0 ? "text-rose-300" : "";
 
@@ -21,10 +18,9 @@ export default function PerpLiveBoard() {
   });
   const enabled = !!user?.onboarded;
   usePerpPresence(enabled);
-  const [side, setSide] = useState<Side>("profit");
   const [page, setPage] = useState(1);
   const board = trpc.perps.liveBoard.useQuery(
-    { page, pageSize: 20, side },
+    { page, pageSize: 20 },
     { enabled, refetchInterval: 5000, retry: 1 }
   );
   const data = board.data;
@@ -59,27 +55,9 @@ export default function PerpLiveBoard() {
         </header>
 
         <section className={panel + " space-y-4"}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-bold">实时{sides[side]}</h2>
-            <div role="group" aria-label="选择榜单" className="flex gap-2">
-              {(["profit", "loss"] as const).map(option => (
-                <button
-                  key={option}
-                  type="button"
-                  className={button + " aria-pressed:bg-[#FFB700]/15"}
-                  aria-pressed={option === side}
-                  onClick={() => {
-                    setSide(option);
-                    setPage(1);
-                  }}
-                >
-                  {sides[option]}
-                </button>
-              ))}
-            </div>
-          </div>
+          <h2 className="text-lg font-bold">实时排名</h2>
           <p className="text-xs text-muted-foreground">
-            每 5 秒刷新。
+            按浮动盈亏从高到低排序，盈亏为 0 也入榜。每 5 秒刷新。
             {data && (
               <>
                 榜单更新于{" "}
@@ -125,11 +103,7 @@ export default function PerpLiveBoard() {
                           {signed(mine.pnlUnits)} 模拟金
                           {mine.pnlUnits === 0 && "（持平）"}
                         </strong>
-                        {mine.rank !== null && (
-                          <span>
-                            {sides[side]}第 {mine.rank} 名
-                          </span>
-                        )}
+                        {mine.rank !== null && <span>第 {mine.rank} 名</span>}
                       </>
                     )}
                     <span>持仓 {mine.positionCount} 笔</span>
@@ -143,7 +117,7 @@ export default function PerpLiveBoard() {
               {data.rows.length ? (
                 <>
                   <Table
-                    title={"实时" + sides[side] + "排名"}
+                    title="实时浮动盈亏排名"
                     columns={["名次", "玩家", "浮动盈亏（模拟金）", "持仓数"]}
                   >
                     {data.rows.map(row => (
@@ -177,7 +151,7 @@ export default function PerpLiveBoard() {
                 </>
               ) : (
                 <p className="py-3 text-sm text-muted-foreground">
-                  当前{sides[side]}暂无排名。
+                  当前暂无可估值持仓排名。
                 </p>
               )}
             </>
