@@ -3,6 +3,7 @@ import { afterEach, it, expect, vi } from "vitest";
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 it("shares only member-facing open positions and expires visible-tab presence", async () => {
   vi.stubEnv("SQLITE_PATH", ":memory:");
@@ -47,12 +48,55 @@ it("shares only member-facing open positions and expires visible-tab presence", 
   insert.run(a.id, "BTCUSDT", now, now, now + 555555);
   insert.run(a.id, "NVDAUSDT", now, now, now + 555555);
   insert.run(b.id, "ETHUSDT", now, now, now + 555555);
+  let markPrice = "110";
+  let offline = false;
+  const bybit = vi.fn(async (url: URL) => {
+    const symbol = url.searchParams.get("symbol");
+    if (offline || symbol !== "BTCUSDT")
+      return new Response(null, { status: 503 });
+    const row = url.pathname.endsWith("/tickers")
+      ? {
+          symbol,
+          bid1Price: "109.99",
+          ask1Price: "110.01",
+          bid1Size: "1",
+          ask1Size: "1",
+          markPrice,
+          lastPrice: "108",
+          fundingRate: "0",
+          nextFundingTime: String(now + 999999),
+        }
+      : {
+          symbol,
+          contractType: "LinearPerpetual",
+          status: "Trading",
+          baseCoin: "BTC",
+          settleCoin: "USDT",
+          quoteCoin: "USDT",
+          priceFilter: { tickSize: "0.01" },
+          lotSizeFilter: {
+            qtyStep: "0.01",
+            minOrderQty: "0.01",
+            maxMktOrderQty: "100",
+            minNotionalValue: "5",
+          },
+          leverageFilter: { maxLeverage: "10" },
+          fundingInterval: 480,
+        };
+    return Response.json({
+      retCode: 0,
+      time: Date.now(),
+      result: { category: "linear", list: [row] },
+    });
+  });
+  vi.stubGlobal("fetch", bybit);
   await expect(caller("").perps.positionSquare({})).rejects.toMatchObject({
     code: "UNAUTHORIZED",
   });
   await expect(caller("").perps.heartbeat()).rejects.toMatchObject({
     code: "UNAUTHORIZED",
   });
+  expect(bybit).not.toHaveBeenCalled();
   const viewer = caller(tb);
   await expect(viewer.admin.listPerpPositions({})).rejects.toMatchObject({
     code: "UNAUTHORIZED",
@@ -69,6 +113,8 @@ it("shares only member-facing open positions and expires visible-tab presence", 
     side: "long",
     quantityAtoms: 100000000,
     entryPriceUnits: 100000,
+    markPriceUnits: 110000,
+    pnlUnits: 10000,
     leverage: 5,
     online: true,
     mine: false,
@@ -118,6 +164,42 @@ it("shares only member-facing open positions and expires visible-tab presence", 
   await expect(
     viewer.perps.positionSquare({ symbol: "invalid" })
   ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  // Only price the rows requested, and reuse a single quote when users hold the same symbol.
+  insert.run(b.id, "BTCUSDT", now, now + 1, now + 555555);
+  db.$client
+    .prepare("UPDATE perp_positions SET side=? WHERE user_id=? AND symbol=?")
+    .run("short", b.id, "BTCUSDT");
+  expect(
+    (await viewer.perps.positionSquare({ symbol: "BTCUSDT" })).items
+  ).toMatchObject([
+    { nickname: "乙", side: "short", markPriceUnits: null, pnlUnits: null },
+    { nickname: "甲", side: "long", markPriceUnits: 110_000, pnlUnits: 10_000 },
+  ]);
+  bybit.mockClear();
+  vi.setSystemTime(now + 5_000);
+  markPrice = "95";
+  expect(
+    (await viewer.perps.positionSquare({ symbol: "BTCUSDT" })).items
+  ).toMatchObject([
+    { nickname: "乙", side: "short", markPriceUnits: 95_000, pnlUnits: 5_000 },
+    { nickname: "甲", side: "long", markPriceUnits: 95_000, pnlUnits: -5_000 },
+  ]);
+  expect(bybit).toHaveBeenCalledTimes(1);
+  expect(bybit.mock.calls[0][0].pathname).toBe("/v5/market/tickers");
+  offline = true;
+  vi.setSystemTime(now + 10_000);
+  expect(
+    await viewer.perps.positionSquare({ symbol: "BTCUSDT" })
+  ).toMatchObject({
+    total: 2,
+    items: [
+      { markPriceUnits: null, pnlUnits: null },
+      { markPriceUnits: null, pnlUnits: null },
+    ],
+  });
+  db.$client
+    .prepare("DELETE FROM perp_positions WHERE user_id=? AND symbol=?")
+    .run(b.id, "BTCUSDT");
   vi.setSystemTime(now + 90000);
   expect((await viewer.perps.positionSquare({ onlineOnly: true })).total).toBe(
     0

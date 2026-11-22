@@ -4,7 +4,7 @@ import { useMe } from "@/hooks/useMe";
 import { SiteNav } from "@/components/SiteNav";
 import { Pager } from "@/components/Pager";
 import { trpc } from "@/providers/trpc";
-import { baseCoin, button, coin, input, sim, panel } from "./format";
+import { baseCoin, button, coin, input, signed, sim, panel } from "./format";
 import { Table } from "./shared";
 import { usePerpPresence } from "./usePerpPresence";
 
@@ -21,7 +21,7 @@ export default function PerpSquare() {
     { page, pageSize: 20, onlineOnly, symbol: symbol || undefined },
     {
       enabled: !!user?.onboarded,
-      refetchInterval: 15000,
+      refetchInterval: 5000,
       retry: 1,
       placeholderData: previous => previous,
     }
@@ -91,6 +91,10 @@ export default function PerpSquare() {
               ))}
             </select>
           </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            每 5 秒刷新。浮动盈亏按 Bybit
+            标记价估算，不含交易手续费和资金费；无有效报价时显示「待估值」。
+          </p>
           {(list.isLoading || list.isPlaceholderData) && (
             <p role="status">正在加载…</p>
           )}
@@ -115,11 +119,16 @@ export default function PerpSquare() {
                       "方向 / 杠杆",
                       "数量",
                       "开仓均价（USDT）",
+                      "标记价（USDT）",
+                      "浮动盈亏（模拟 USDT）",
                     ]}
                   >
                     {list.data.items.map(p => (
                       <tr key={JSON.stringify([p.nickname, p.symbol])}>
-                        <th className="px-3 py-2" scope="row">
+                        <th
+                          className="sticky left-0 bg-[#101d2b] px-3 py-2"
+                          scope="row"
+                        >
                           {p.nickname}
                           {p.mine ? "（我）" : ""}
                         </th>
@@ -140,6 +149,22 @@ export default function PerpSquare() {
                           {coin(p.quantityAtoms)} {baseCoin(p.symbol)}
                         </td>
                         <td>{sim(p.entryPriceUnits)}</td>
+                        <td>
+                          {p.markPriceUnits === null
+                            ? "—"
+                            : sim(p.markPriceUnits)}
+                        </td>
+                        <td
+                          className={
+                            p.pnlUnits === null || p.pnlUnits === 0
+                              ? "text-muted-foreground"
+                              : p.pnlUnits > 0
+                                ? "text-emerald-300"
+                                : "text-rose-300"
+                          }
+                        >
+                          {p.pnlUnits === null ? "待估值" : signed(p.pnlUnits)}
+                        </td>
                       </tr>
                     ))}
                   </Table>
