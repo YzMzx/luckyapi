@@ -37,7 +37,7 @@ const edit = {
   platformLimitUnits: 123456,
 };
 const ddl =
-  "CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE admin_logs(action TEXT,detail TEXT,created_at INTEGER); CREATE TABLE perp_positions(symbol TEXT,quantity_atoms INTEGER);";
+  "CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE admin_logs(action TEXT,detail TEXT,created_at INTEGER); CREATE TABLE perp_positions(symbol TEXT,quantity_atoms INTEGER); CREATE TABLE perp_pending_orders(symbol TEXT,status TEXT);";
 beforeEach(() => {
   db = new Database(":memory:");
   db.exec(ddl);
@@ -156,6 +156,20 @@ it("protects open positions and updates its audit trail atomically", () => {
   expect(() => savePerpConfig(db, edit)).toThrow("fixture");
   expect(db.prepare("SELECT count(*) FROM settings").pluck().get()).toBe(0);
 });
+it.each(["pending", "triggered"])(
+  "keeps a contract with %s orders available for matching and cancellation",
+  status => {
+    db.prepare("INSERT INTO perp_pending_orders VALUES('BTCUSDT',?)").run(
+      status
+    );
+    expect(() => savePerpConfig(db, edit)).toThrow("仍有待成交委托");
+    expect(db.prepare("SELECT count(*) FROM admin_logs").pluck().get()).toBe(0);
+    db.prepare("UPDATE perp_pending_orders SET status='cancelled'").run();
+    expect(savePerpConfig(db, edit).symbols.map(s => s.symbol)).toEqual([
+      "ETHUSDT",
+    ]);
+  }
+);
 it("verifies additions and reopenings, keeps existing modes on old updates and permits close-only while held", async () => {
   const added = { ...edit, symbols: ["BTCUSDT", "ETHUSDT", "NVDAUSDT"] };
   expect(() => savePerpConfig(db, added)).toThrow("尚未核验");

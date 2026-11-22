@@ -1,14 +1,21 @@
 import type Database from "better-sqlite3";
 import { applyPerpFunding, liquidatePerpPositions } from "./engine";
-import { getBoundaryMark, getFundingHistory, getPerpQuote } from "./market";
+import {
+  getBoundaryMark,
+  getFundingHistory,
+  getPerpInstrument,
+  getPerpQuote,
+} from "./market";
+import { listPendingSymbols, matchPending, pendingForSymbol } from "./pending";
+import { SETTING_KEYS } from "../settings";
 import { settlePerpWeeks, storePerpBoundaryMark } from "./weekly";
 
 type Db = Database.Database;
 const WEEK = 7 * 86_400_000;
 const FRESH_MS = 5_000;
-const RETRY_MS = 5_000;
+export const PERP_MAINTENANCE_INTERVAL_MS = 5_000;
 const active = new WeakSet<Db>();
-const retryAt = new WeakMap<Db, number>();
+const nextRunAt = new WeakMap<Db, number>();
 
 function freshQuote(quote: Awaited<ReturnType<typeof getPerpQuote>>) {
   if (!quote) return false;
@@ -62,15 +69,66 @@ async function settleDueFunding(db: Db, symbol: string, due: number) {
   }
 }
 
-async function maintainSymbol(db: Db, symbol: string, due: number) {
-  if (due <= Date.now()) await settleDueFunding(db, symbol, due);
-  // The engine checks each position's due cursor again in the liquidation transaction.
+async function maintainSymbol(
+  db: Db,
+  symbol: string,
+  due: number | undefined,
+  hasOrders: boolean
+) {
+  if (due !== undefined && due <= Date.now())
+    await settleDueFunding(db, symbol, due);
+  // Settle funding and liquidation before discretionary orders at the same observed quote.
   const q = await getPerpQuote(db, symbol);
-  if (q && q.symbol === symbol && freshQuote(q)) liquidatePerpPositions(db, q);
+  if (!q || q.symbol !== symbol || !freshQuote(q)) return;
+  if (due !== undefined) liquidatePerpPositions(db, q);
+  if (!hasOrders) return;
+  const instrument = await getPerpInstrument(db, symbol);
+  if (!instrument || instrument.symbol !== symbol || !freshQuote(q)) return;
+  const snapshot = {
+    ...q,
+    tickSizeUnits: instrument.tickSizeUnits,
+    qtyStepAtoms: instrument.qtyStepUnits,
+    minQtyAtoms: instrument.minQtyUnits,
+    maxQtyAtoms: instrument.maxQtyUnits,
+    minNotionalUnits: instrument.minNotionalUnits,
+    maxLeverage: instrument.maxLeverage,
+  };
+  const maintenance = db
+    .prepare<[string], string>("SELECT value FROM settings WHERE key=?")
+    .pluck();
+  const eligible = db.prepare<
+    [number],
+    { banned: number; onboarded: number; frozen: number }
+  >(
+    `SELECT u.banned, (length(trim(coalesce(u.group_name,'')))>0) AS onboarded,
+       (coalesce(p.all_frozen,0) OR coalesce(p.finance_frozen,0) OR coalesce(p.entertainment_frozen,0)) AS frozen
+     FROM users u LEFT JOIN user_policies p ON p.user_id=u.id WHERE u.id=?`
+  );
+  const guard = (id: number) => {
+    const player = eligible.get(id);
+    if (!player || player.banned || !player.onboarded)
+      return "账户已停用或未完成注册，委托失效";
+    return player.frozen ? "金融或娱乐权限已被冻结，委托失效" : null;
+  };
+  const attempt = db.transaction((id: number) => {
+    // Hold the write lock through both the maintenance check and the engine's nested
+    // transaction, so a concurrent operator update cannot race a fill. Keep orders
+    // waiting during global maintenance; user-specific eligibility failures are terminal.
+    if (maintenance.get(SETTING_KEYS.maintenanceMode) === "1") return false;
+    matchPending(db, id, snapshot, guard);
+    return true;
+  });
+  for (const order of pendingForSymbol(db, symbol)) {
+    if (!freshQuote(q) || !attempt.immediate(order.id)) break;
+  }
 }
 
 export async function refreshPerpMaintenance(db: Db) {
-  if (active.has(db) || Date.now() < (retryAt.get(db) ?? 0)) return;
+  const now = Date.now();
+  if (active.has(db) || now < (nextRunAt.get(db) ?? 0)) return;
+  // The timer and request-driven refreshes share a start-to-start interval.
+  // Starting the cooldown after completion could skip the next timer tick.
+  nextRunAt.set(db, now + PERP_MAINTENANCE_INTERVAL_MS);
   active.add(db);
   try {
     const holdings = db
@@ -78,10 +136,18 @@ export async function refreshPerpMaintenance(db: Db) {
         "SELECT symbol,min(next_funding_at) AS due FROM perp_positions WHERE quantity_atoms>0 GROUP BY symbol"
       )
       .all();
+    const cursors = new Map(holdings.map(({ symbol, due }) => [symbol, due]));
+    const pending = new Set(listPendingSymbols(db));
+    const symbols = new Set([...cursors.keys(), ...pending]);
     await Promise.all(
-      holdings.map(async ({ symbol, due }) => {
+      [...symbols].map(async symbol => {
         try {
-          await maintainSymbol(db, symbol, due);
+          await maintainSymbol(
+            db,
+            symbol,
+            cursors.get(symbol),
+            pending.has(symbol)
+          );
         } catch (error) {
           console.error("永续合约风险巡检等待重试", symbol, error);
         }
@@ -99,7 +165,6 @@ export async function refreshPerpMaintenance(db: Db) {
   } catch (error) {
     console.error("永续合约周榜等待重试", error);
   } finally {
-    retryAt.set(db, Date.now() + RETRY_MS);
     active.delete(db);
   }
 }

@@ -176,6 +176,18 @@ function commitConfig(
         throw new PerpConfigError(
           occupied.symbol + " 仍有持仓，暂时不能移出可选合约。"
         );
+      const pending = db
+        .prepare<[], { symbol: PerpSymbol }>(
+          "SELECT DISTINCT symbol FROM perp_pending_orders WHERE status IN ('pending','triggered')"
+        )
+        .all();
+      const outstanding = pending.find(
+        order => !values.symbols.includes(order.symbol)
+      );
+      if (outstanding)
+        throw new PerpConfigError(
+          outstanding.symbol + " 仍有待成交委托，请先撤单或等候成交后再移除。"
+        );
       db.prepare(
         "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
       ).run(configKey, JSON.stringify(values));

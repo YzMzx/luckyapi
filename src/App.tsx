@@ -8,6 +8,7 @@ import Draw from './pages/Draw'
 import Entertainment from './pages/Entertainment'
 import Perps from './pages/perp/Perps'
 import PerpBoard from './pages/perp/PerpBoard'
+import PerpSquare from './pages/perp/PerpSquare'
 import Slot from './pages/Slot'
 import Checkin from './pages/Checkin'
 import ConsoleOverview from './pages/console/Overview'
@@ -38,6 +39,7 @@ import AdminControl from './pages/admin/Control'
 import AdminAuthSettings from './pages/admin/AuthSettings'
 import AdminFinanceSettings from './pages/admin/FinanceSettings'
 import AdminPerpSettings from './pages/admin/PerpSettings'
+import AdminPerpPositions from './pages/admin/PerpPositions'
 import AdminMonitoring from './pages/admin/Monitoring'
 import AdminEntOverview from './pages/admin/ent/Overview'
 import AdminEntDraw from './pages/admin/ent/Draw'
@@ -84,6 +86,7 @@ export default function App() {
         <Route path="/draw" element={<Draw />} />
         <Route path="/entertainment" element={<Entertainment />} />
         <Route path="/contracts" element={<Perps />} />
+        <Route path="/contracts/square" element={<PerpSquare />} />
         <Route path="/contracts/weeks" element={<PerpBoard />} />
         <Route path="/slot" element={<Slot />} />
         <Route path="/checkin" element={<Checkin />} />
@@ -114,6 +117,7 @@ export default function App() {
           <Route path="auth-settings" element={<AdminAuthSettings />} />
           <Route path="finance-settings" element={<AdminFinanceSettings />} />
           <Route path="contracts-settings" element={<AdminPerpSettings />} />
+          <Route path="contracts-positions" element={<AdminPerpPositions />} />
           <Route path="monitoring" element={<AdminMonitoring />} />
           <Route path="groups" element={<AdminGroups />} />
           <Route path="invites" element={<AdminInvites />} />

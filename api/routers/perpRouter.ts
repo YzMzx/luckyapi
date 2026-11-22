@@ -1,5 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import {
+  DEFAULT_PERP_KLINE_INTERVAL,
+  PERP_KLINE_INTERVALS,
+} from "@contracts/perp-kline";
+import { perpHeartbeat, positionSquare } from "./perpSquare";
 import { memberQuery } from "../auth";
 import { createRouter } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -14,6 +19,12 @@ import {
   previewPerpExchange,
 } from "../perp/engine";
 import { getPerpMarket, getPerpQuote, getPerpInstrument } from "../perp/market";
+import {
+  createPending,
+  cancelPending,
+  listPending,
+  replayPending,
+} from "../perp/pending";
 import { refreshPerpMaintenance } from "../perp/maintenance";
 import { getPerpWeeklyBoard, listPerpWeeks } from "../perp/weekly";
 
@@ -28,6 +39,53 @@ const exchangeInput = z.object({
   amountUnits: units,
 });
 
+const baseOrder = z.object({
+  symbol,
+  action: z.enum(["openLong", "openShort", "close"]),
+  quantityAtoms: units,
+  leverage: z.union([z.literal(1), z.literal(2), z.literal(5)]).optional(),
+  requestKey,
+});
+const trigger = {
+  triggerPriceUnits: units,
+  triggerDirection: z.enum(["above", "below"]),
+};
+const pendingInput = z.discriminatedUnion("kind", [
+  baseOrder
+    .extend({ kind: z.literal("limit"), limitPriceUnits: units })
+    .strict(),
+  baseOrder
+    .extend({ kind: z.literal("conditionalMarket"), ...trigger })
+    .strict(),
+  baseOrder
+    .extend({
+      kind: z.literal("conditionalLimit"),
+      limitPriceUnits: units,
+      ...trigger,
+    })
+    .strict(),
+]);
+async function loadSnapshot(
+  db: ReturnType<typeof getDb>["$client"],
+  ticker: string,
+  afterMs?: number
+) {
+  const [q, i] = await Promise.all([
+    getPerpQuote(db, ticker, afterMs),
+    getPerpInstrument(db, ticker),
+  ]);
+  return q && i
+    ? {
+        ...q,
+        qtyStepAtoms: i.qtyStepUnits,
+        minQtyAtoms: i.minQtyUnits,
+        maxQtyAtoms: i.maxQtyUnits,
+        minNotionalUnits: i.minNotionalUnits,
+        maxLeverage: i.maxLeverage,
+        tickSizeUnits: i.tickSizeUnits,
+      }
+    : null;
+}
 function assertWriteAccess(userId: number) {
   const db = getDb();
   const policy = readUserPolicy(db, userId);
@@ -56,18 +114,29 @@ async function applyRule<T>(action: () => T | Promise<T>) {
 }
 
 export const perpRouter = createRouter({
+  heartbeat: perpHeartbeat,
+  positionSquare,
   symbols: memberQuery.query(() => readPerpConfig(getDb().$client).symbols),
-  market: memberQuery.input(z.object({ symbol })).query(async ({ input }) => {
-    const db = getDb().$client;
-    const market = await getPerpMarket(db, input.symbol);
-    const config = readPerpConfig(db);
-    return {
-      ...market,
-      tradingEnabled:
-        config.tradingEnabled &&
-        config.symbols.some(s => s.symbol === input.symbol && s.openEnabled),
-    };
-  }),
+  market: memberQuery
+    .input(
+      z.object({
+        symbol,
+        interval: z
+          .literal(PERP_KLINE_INTERVALS)
+          .default(DEFAULT_PERP_KLINE_INTERVAL),
+      })
+    )
+    .query(async ({ input }) => {
+      const db = getDb().$client;
+      const market = await getPerpMarket(db, input.symbol, input.interval);
+      const config = readPerpConfig(db);
+      return {
+        ...market,
+        tradingEnabled:
+          config.tradingEnabled &&
+          config.symbols.some(s => s.symbol === input.symbol && s.openEnabled),
+      };
+    }),
   account: memberQuery.query(({ ctx }) => {
     const db = getDb().$client;
     void refreshPerpMaintenance(db);
@@ -103,45 +172,54 @@ export const perpRouter = createRouter({
       const db = getDb().$client;
       return applyRule(() => exchangePerp(db, ctx.user.id, input));
     }),
-  placeOrder: memberQuery
-    .input(
-      z.object({
-        symbol,
-        action: z.enum(["openLong", "openShort", "close"]),
-        quantityAtoms: units,
-        leverage: z
-          .union([z.literal(1), z.literal(2), z.literal(5)])
-          .optional(),
-        requestKey,
-      })
-    )
-    .mutation(({ ctx, input }) => {
-      assertWriteAccess(ctx.user.id);
-      const db = getDb().$client;
-      return applyRule(() =>
-        placePerpOrder(db, ctx.user.id, input, async (ticker, afterMs) => {
-          const [quote, instrument] = await Promise.all([
-            getPerpQuote(db, ticker, afterMs),
-            getPerpInstrument(db, ticker),
-          ]);
-          if (!quote || !instrument) return null;
-          if (
-            input.quantityAtoms > instrument.maxQtyUnits ||
-            (input.leverage ?? 1) > instrument.maxLeverage
-          ) {
-            throw new PerpRuleError("数量或杠杆超过该合约当前允许范围");
-          }
-          return {
-            ...quote,
-            qtyStepAtoms: instrument.qtyStepUnits,
-            minQtyAtoms: instrument.minQtyUnits,
-            maxQtyAtoms: instrument.maxQtyUnits,
-            minNotionalUnits: instrument.minNotionalUnits,
-            maxLeverage: instrument.maxLeverage,
-          };
-        })
+  placeOrder: memberQuery.input(baseOrder).mutation(({ ctx, input }) => {
+    assertWriteAccess(ctx.user.id);
+    const db = getDb().$client;
+    return applyRule(() =>
+      placePerpOrder(db, ctx.user.id, input, (ticker, afterMs) =>
+        loadSnapshot(db, ticker, afterMs)
+      )
+    );
+  }),
+  pendingOrders: memberQuery.query(({ ctx }) => {
+    const db = getDb().$client;
+    void refreshPerpMaintenance(db);
+    return listPending(db, ctx.user.id);
+  }),
+  cancelPending: memberQuery
+    .input(z.object({ id: units }))
+    .mutation(({ ctx, input }) =>
+      // Cancelling only reduces exposure; it remains available while opening is paused.
+      applyRule(() => cancelPending(getDb().$client, ctx.user.id, input.id))
+    ),
+  createPending: memberQuery.input(pendingInput).mutation(({ ctx, input }) => {
+    assertWriteAccess(ctx.user.id);
+    const db = getDb().$client;
+    const { kind, ...parameters } = input;
+    const order = {
+      ...parameters,
+      orderType:
+        kind === "limit" ? ("limit" as const) : ("conditional" as const),
+    };
+    return applyRule(async () => {
+      const prior = replayPending(db, ctx.user.id, order);
+      if (prior) return prior;
+      const cfg = readPerpConfig(db),
+        listed = cfg.symbols.find(s => s.symbol === order.symbol);
+      if (
+        !listed ||
+        (order.action !== "close" &&
+          (!listed.openEnabled || !cfg.tradingEnabled))
+      )
+        throw new PerpRuleError("合约未开放或已暂停开仓");
+      return createPending(
+        db,
+        ctx.user.id,
+        order,
+        await loadSnapshot(db, order.symbol)
       );
-    }),
+    });
+  }),
   weeks: memberQuery
     .input(
       z

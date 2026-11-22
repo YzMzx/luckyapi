@@ -59,6 +59,28 @@ it("adds NVDAUSDT, runs a short, closes a close-only position, and archives trad
     expect(url.origin).toBe("https://api.bybit.com");
     vi.setSystemTime(Date.now() + 50);
     const symbol = url.searchParams.get("symbol");
+    if (url.pathname.endsWith("/kline")) {
+      const ms = Number(url.searchParams.get("interval")) * 60_000;
+      return Response.json({
+        retCode: 0,
+        time: Date.now(),
+        result: {
+          category: "linear",
+          symbol,
+          list: [
+            [
+              String(Math.floor(Date.now() / ms) * ms),
+              "100",
+              "101",
+              "99",
+              "100",
+              "1",
+              "100",
+            ],
+          ],
+        },
+      });
+    }
     const row = url.pathname.endsWith("/tickers")
       ? {
           symbol,
@@ -110,6 +132,18 @@ it("adds NVDAUSDT, runs a short, closes a close-only position, and archives trad
   expect(await perps.symbols()).toContainEqual(
     expect.objectContaining({ symbol: "NVDAUSDT", openEnabled: true })
   );
+  const defaultMarket = await perps.market({ symbol: "NVDAUSDT" });
+  expect(defaultMarket).toMatchObject({
+    interval: 1,
+    bars: [{ complete: false }],
+  });
+  const wider = await perps.market({ symbol: "NVDAUSDT", interval: 5 });
+  expect(wider.interval).toBe(5);
+  expect(wider.bars[0].endAt - defaultMarket.bars[0].endAt).toBe(4 * 60_000);
+  await expect(
+    perps.market({ symbol: "NVDAUSDT", interval: 2 as 1 })
+  ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  vi.setSystemTime(Date.now() + 1100);
   const request = { direction: "in" as const, amountUnits: 5_000_000 };
   const prior = await perps.exchangePreview(request);
   const deposit = {
@@ -144,6 +178,41 @@ it("adds NVDAUSDT, runs a short, closes a close-only position, and archives trad
     leverage: 5 as const,
     requestKey: randomUUID(),
   };
+  // A limit order belongs to its submitting member and does not place an immediate market order.
+  const limit = {
+    ...open,
+    kind: "limit" as const,
+    limitPriceUnits: bid + 1_000,
+    requestKey: randomUUID(),
+  };
+  const receipt = await perps.createPending(limit);
+  expect(receipt).toMatchObject({ status: "pending", orderType: "limit" });
+  expect(await perps.createPending(limit)).toMatchObject({ id: receipt.id });
+  expect((await perps.pendingOrders()).map(p => p.id)).toContain(receipt.id);
+  await expect(caller("").perps.pendingOrders()).rejects.toMatchObject({
+    code: "UNAUTHORIZED",
+  });
+  const other = db
+    .insert(users)
+    .values({
+      linuxdoId: "other-perp",
+      username: "other",
+      groupName: "其他玩家",
+    })
+    .returning()
+    .get();
+  const otherToken = randomUUID();
+  db.insert(sessions)
+    .values({ token: otherToken, userId: other.id, expiresAt })
+    .run();
+  const otherPerps = caller("ld_session=" + otherToken).perps;
+  expect(await otherPerps.pendingOrders()).toHaveLength(0);
+  await expect(otherPerps.cancelPending({ id: receipt.id })).rejects.toThrow();
+  expect(await perps.cancelPending({ id: receipt.id })).toMatchObject({
+    status: "cancelled",
+  });
+  expect((await perps.account()).availableCashUnits).toBe(10_000_000);
+  vi.setSystemTime(Date.now() + 1100);
   const fill = await perps.placeOrder(open);
   expect(fill).toMatchObject({ side: "short", priceUnits: bid, feeUnits: 600 });
   expect(await perps.placeOrder(open)).toEqual(fill);

@@ -2,9 +2,16 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { skipToken } from "@tanstack/react-query";
 import { trpc } from "@/providers/trpc";
+import {
+  DEFAULT_PERP_KLINE_INTERVAL,
+  PERP_KLINE_INTERVALS,
+  type PerpKlineInterval,
+} from "@contracts/perp-kline";
 import { SiteNav } from "@/components/SiteNav";
+import { usePerpPresence } from "./usePerpPresence";
 import { useMe } from "@/hooks/useMe";
 import { PerpChart } from "./PerpChart";
+import { PendingOrders } from "./PendingOrders";
 import { ExchangeForm, TradeForm } from "./PerpForms";
 import {
   type PerpApi,
@@ -175,6 +182,10 @@ export default function Perps() {
     requireAuth: true,
     requireOnboarded: true,
   });
+  usePerpPresence(!!user?.onboarded);
+  const [interval, setIntervalMinutes] = useState<PerpKlineInterval>(
+    DEFAULT_PERP_KLINE_INTERVAL
+  );
   const enabled = !!user?.onboarded,
     [selected, setSelected] = useState("");
   const symbols = trpc.perps.symbols.useQuery(undefined, {
@@ -184,11 +195,17 @@ export default function Perps() {
   const symbol =
     symbols.data?.find(s => s.symbol === selected)?.symbol ??
     symbols.data?.[0]?.symbol;
-  const market = trpc.perps.market.useQuery(symbol ? { symbol } : skipToken, {
-    enabled: enabled && !!symbol,
-    refetchInterval: 3000,
-    retry: 1,
-  });
+  const market = trpc.perps.market.useQuery(
+    symbol ? { symbol, interval } : skipToken,
+    {
+      enabled: enabled && !!symbol,
+      // Keep the order form mounted while fetching a different chart for the same symbol.
+      placeholderData: previous =>
+        previous?.symbol === symbol ? previous : undefined,
+      refetchInterval: 3000,
+      retry: 1,
+    }
+  );
   const account = trpc.perps.account.useQuery(undefined, {
     enabled,
     refetchInterval: 10000,
@@ -211,9 +228,14 @@ export default function Perps() {
               Bybit 公开行情 · 24 小时模拟交易 · 逐仓保证金
             </p>
           </div>
-          <Link className={button} to="/contracts/weeks">
-            历史盈亏周榜 →
-          </Link>
+          <nav aria-label="合约社区" className="flex flex-wrap gap-2">
+            <Link className={button} to="/contracts/square">
+              持仓广场 →
+            </Link>
+            <Link className={button} to="/contracts/weeks">
+              历史盈亏周榜 →
+            </Link>
+          </nav>
         </header>
         {account.error && (
           <p role="alert">
@@ -250,6 +272,26 @@ export default function Perps() {
                   <option key={s.symbol} value={s.symbol}>
                     {s.name} · {s.symbol}
                     {s.openEnabled ? "" : " · 仅平仓"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label htmlFor="perp-kline-period" className="mt-3 block text-sm">
+              K 线周期
+              <select
+                id="perp-kline-period"
+                className={input}
+                value={interval}
+                onChange={e => {
+                  const selected = PERP_KLINE_INTERVALS.find(
+                    value => String(value) === e.target.value
+                  );
+                  if (selected) setIntervalMinutes(selected);
+                }}
+              >
+                {PERP_KLINE_INTERVALS.map(value => (
+                  <option key={value} value={value}>
+                    {value} 分钟
                   </option>
                 ))}
               </select>
@@ -291,11 +333,17 @@ export default function Perps() {
                   {current.source} ·{" "}
                   {quote ? "盘口时间 " + stamp(quote.asOf) : "实时盘口暂不可用"}
                 </p>
-                <PerpChart
-                  key={symbol}
-                  market={current}
-                  trades={wallet?.orders ?? []}
-                />
+                {current.interval === interval ? (
+                  <PerpChart
+                    key={symbol + ":" + interval}
+                    market={current}
+                    trades={wallet?.orders ?? []}
+                  />
+                ) : (
+                  <p role="status" className="py-6 text-muted-foreground">
+                    正在读取 {interval} 分钟 K 线…
+                  </p>
+                )}
                 {current.readOnlyReason && (
                   <p className="mt-3 text-sm">{current.readOnlyReason}</p>
                 )}
@@ -344,6 +392,7 @@ export default function Perps() {
               </section>
               <ExchangeForm account={wallet} />
             </div>
+            <PendingOrders />
             <Records account={wallet} />
           </>
         )}

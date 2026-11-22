@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
+import type { PerpKlineInterval } from "@contracts/perp-kline";
 import { perpSymbolSchema, readPerpConfig } from "./config";
 
 export const PERP_MARKET_SCHEMA = `
@@ -7,7 +8,6 @@ CREATE TABLE IF NOT EXISTS perp_chart_cache(symbol TEXT PRIMARY KEY, fetched_at 
 CREATE TABLE IF NOT EXISTS perp_boundary_marks(symbol TEXT NOT NULL, boundary_at INTEGER NOT NULL, price_units INTEGER NOT NULL CHECK(price_units>0), PRIMARY KEY(symbol,boundary_at));`;
 type Db = Database.Database;
 const minute = 60_000,
-  quarter = 15 * minute,
   day = 24 * 60 * minute;
 export type PerpBar = {
   endAt: number;
@@ -350,10 +350,14 @@ function prices(row: readonly string[]) {
   );
   return { open, high, low, close };
 }
-async function getBars(db: Db, symbol: string) {
-  const bars = await shared(db, "bars:" + symbol, 15_000, async () => {
+async function getBars(db: Db, symbol: string, interval: PerpKlineInterval) {
+  const intervalMs = interval * minute;
+  // Legacy rows keyed by bare symbol exclusively contain 15m candles. Symbol
+  // validation excludes colons, so shorter periods cannot collide with them.
+  const cacheKey = interval === 15 ? symbol : `${symbol}:${interval}`;
+  const bars = await shared(db, "bars:" + cacheKey, 15_000, async () => {
     const { time, result } = await request(db, "kline", symbol, {
-      interval: "15",
+      interval: String(interval),
       limit: "200",
     });
     requireData(
@@ -363,24 +367,24 @@ async function getBars(db: Db, symbol: string) {
       .map(raw => {
         const row = barSchema.parse(raw);
         const start = timestamp(row[0]);
-        requireData(start % quarter === 0 && start <= time);
+        requireData(start % intervalMs === 0 && start <= time);
         const { open, high, low, close } = prices(row);
         return {
-          endAt: start + quarter,
+          endAt: start + intervalMs,
           open: open / 1000,
           high: high / 1000,
           low: low / 1000,
           close: close / 1000,
           volume: units(row[5], 8) / 1e8,
-          complete: start + quarter <= time,
+          complete: start + intervalMs <= time,
         };
       })
       .reverse();
     requireData(
-      parsed.every((b, i) => !i || b.endAt === parsed[i - 1].endAt + quarter)
+      parsed.every((b, i) => !i || b.endAt === parsed[i - 1].endAt + intervalMs)
     );
     db.prepare("INSERT OR REPLACE INTO perp_chart_cache VALUES(?,?,?)").run(
-      symbol,
+      cacheKey,
       time,
       JSON.stringify(parsed)
     );
@@ -389,17 +393,21 @@ async function getBars(db: Db, symbol: string) {
   if (bars) return { bars, source: "Bybit 公共行情" };
   const saved = db
     .prepare("SELECT bars_json FROM perp_chart_cache WHERE symbol=?")
-    .get(symbol) as { bars_json: string } | undefined;
+    .get(cacheKey) as { bars_json: string } | undefined;
   return {
     bars: saved ? (JSON.parse(saved.bars_json) as PerpBar[]) : [],
     source: saved ? "Bybit 历史缓存" : "Bybit 行情暂不可用",
   };
 }
-export async function getPerpMarket(db: Db, symbol: string) {
+export async function getPerpMarket(
+  db: Db,
+  symbol: string,
+  interval: PerpKlineInterval = 1
+) {
   const stock = listPerpSymbols(db).find(s => s.symbol === symbol);
   if (!stock) throw new Error("合约未开放");
   const [history, raw, instrument] = await Promise.all([
-    getBars(db, symbol),
+    getBars(db, symbol, interval),
     getPerpQuote(db, symbol),
     getPerpInstrument(db, symbol),
   ]);
@@ -408,6 +416,7 @@ export async function getPerpMarket(db: Db, symbol: string) {
   return {
     ...stock,
     ...history,
+    interval,
     instrument,
     quote,
     readOnlyReason:

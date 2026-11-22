@@ -1,6 +1,8 @@
 // Cash/price: milli-USDT. Contract quantity: one hundred million atoms per coin.
 export const PERP_ENGINE_SCHEMA = `CREATE TABLE IF NOT EXISTS perp_wallets (
  user_id INTEGER PRIMARY KEY REFERENCES users(id), cash_units INTEGER NOT NULL CHECK(cash_units>=0));
+CREATE TABLE IF NOT EXISTS perp_presence (
+ user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, seen_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS perp_positions (
  user_id INTEGER NOT NULL REFERENCES users(id), symbol TEXT NOT NULL, side TEXT NOT NULL CHECK(side IN ('long','short')),
  quantity_atoms INTEGER NOT NULL CHECK(quantity_atoms>0), entry_units INTEGER NOT NULL CHECK(entry_units>0),
@@ -23,6 +25,20 @@ CREATE TABLE IF NOT EXISTS perp_orders (
  quantity_atoms INTEGER NOT NULL,leverage INTEGER NOT NULL,price_units INTEGER NOT NULL,mark_units INTEGER NOT NULL,
  fee_units INTEGER NOT NULL,pnl_units INTEGER NOT NULL,created_at INTEGER NOT NULL,request_key TEXT,UNIQUE(user_id,request_key));
 CREATE INDEX IF NOT EXISTS perp_user_orders ON perp_orders(user_id,id);
+CREATE TABLE IF NOT EXISTS perp_pending_orders (
+ id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),request_key TEXT NOT NULL,
+ symbol TEXT NOT NULL,action TEXT NOT NULL CHECK(action IN ('openLong','openShort','close')),
+ side TEXT NOT NULL CHECK(side IN ('long','short')),order_type TEXT NOT NULL CHECK(order_type IN ('limit','conditional')),
+ quantity_atoms INTEGER NOT NULL CHECK(quantity_atoms>0),leverage INTEGER NOT NULL CHECK(leverage IN (1,2,5)),
+ limit_price_units INTEGER,trigger_price_units INTEGER,trigger_direction TEXT CHECK(trigger_direction IN ('above','below')),
+ created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,triggered_at INTEGER,last_quote_at INTEGER NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('pending','triggered','filled','cancelled','rejected')),
+ fill_order_id INTEGER REFERENCES perp_orders(id),reason TEXT,UNIQUE(user_id,request_key)
+);
+CREATE INDEX IF NOT EXISTS perp_pending_active ON perp_pending_orders(symbol,id) WHERE status IN ('pending','triggered');
+CREATE TABLE IF NOT EXISTS perp_pending_position_bindings (
+ pending_id INTEGER PRIMARY KEY REFERENCES perp_pending_orders(id) ON DELETE CASCADE, opened_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS perp_pending_user ON perp_pending_orders(user_id,id);
 CREATE TABLE IF NOT EXISTS perp_events (
  id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),symbol TEXT,
  kind TEXT NOT NULL CHECK(kind IN ('in','out','open','close','liquidate','funding')),

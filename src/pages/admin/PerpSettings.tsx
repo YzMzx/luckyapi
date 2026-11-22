@@ -161,7 +161,7 @@ function SymbolCatalog({
         品种名单（{rows.length} / {maxSymbols}）
       </p>
       <p className={hint}>
-        仅平仓品种仍可查看行情并平仓。有持仓时不能移除。修改名单后请保存。
+        仅平仓品种仍可查看行情并平仓。有持仓或未结束委托时不能移除。修改名单后请保存。
       </p>
       <ul className="mt-2 space-y-2">
         {rows.map(row => (
@@ -430,7 +430,7 @@ function Form({
           <dl className="mt-3 grid gap-3 sm:grid-cols-2">
             {[
               ["行情来源", "Bybit V5 公共行情 · 服务端直连"],
-              ["图表", "15 分钟 K 线"],
+              ["图表", "1、3、5、15 分钟 K 线（默认 1 分钟）"],
               ["仓位模式", "逐仓 · USDT 本位永续"],
               ["杠杆", saved.allowedLeverage.map(n => n + "×").join(" / ")],
               ["模拟 Taker 手续费", (saved.takerFeeBps / 100).toFixed(2) + "%"],

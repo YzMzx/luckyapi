@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { SiteNav } from "@/components/SiteNav";
 import { Pager } from "@/components/Pager";
+import { usePerpPresence } from "./usePerpPresence";
 import { useMe } from "@/hooks/useMe";
 import { trpc } from "@/providers/trpc";
 import { button, day, input, panel, signed, stamp } from "./format";
@@ -13,6 +14,7 @@ export default function PerpBoard() {
     requireAuth: true,
     requireOnboarded: true,
   });
+  usePerpPresence(!!user?.onboarded);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState(0);
   const [side, setSide] = useState<"profit" | "loss">("profit");

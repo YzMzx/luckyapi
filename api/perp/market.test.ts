@@ -104,8 +104,8 @@ it("coalesces chart, ticker and instrument pulls and parses exact USDT and contr
         : reply([bar, [String(start - 15 * min), ...bar.slice(1)]])
   );
   const [a, b] = await Promise.all([
-    getPerpMarket(db, symbol),
-    getPerpMarket(db, symbol),
+    getPerpMarket(db, symbol, 15),
+    getPerpMarket(db, symbol, 15),
   ]);
   expect(mock).toHaveBeenCalledTimes(3);
   expect(a).toEqual(b);
@@ -136,11 +136,82 @@ it("coalesces chart, ticker and instrument pulls and parses exact USDT and contr
   });
   vi.setSystemTime(now + 90_000);
   feed(() => new Response("Down", { status: 503 }));
-  const offline = await getPerpMarket(db, symbol);
+  const offline = await getPerpMarket(db, symbol, 15);
   expect(offline.bars).toEqual(a.bars);
   expect(offline.source).toContain("缓存");
   expect(offline.quote).toBeNull();
   expect(offline.readOnlyReason).toBeTruthy();
+});
+it("fetches 1m by default and keeps periods separate in memory and on disk", async () => {
+  const periods = [1, 3, 5, 15] as const;
+  const calls: number[] = [];
+  feed(url => {
+    if (!url.pathname.endsWith("/kline"))
+      return reply(url.pathname.endsWith("/tickers") ? [ticker] : [instrument]);
+    const interval = Number(url.searchParams.get("interval"));
+    calls.push(interval);
+    const step = interval * min,
+      current = Math.floor(now / step) * step;
+    return reply(
+      [current, current - step].map(t => [String(t), ...bar.slice(1)])
+    );
+  });
+  const snapshots = await Promise.all(
+    periods.map(p =>
+      p === 1 ? getPerpMarket(db, symbol) : getPerpMarket(db, symbol, p)
+    )
+  );
+  expect(calls.sort((a, b) => a - b)).toEqual(periods);
+  for (const [index, p] of periods.entries()) {
+    const latestStart = Math.floor(now / (p * min)) * p * min;
+    expect(snapshots[index]).toMatchObject({
+      interval: p,
+      bars: [
+        { endAt: latestStart, complete: true },
+        { endAt: latestStart + p * min, complete: false },
+      ],
+    });
+  }
+  vi.setSystemTime(now + 90_000);
+  feed(() => new Response("Offline", { status: 503 }));
+  for (const [index, p] of periods.entries()) {
+    const cached = await getPerpMarket(db, symbol, p);
+    expect(cached).toMatchObject({
+      interval: p,
+      source: "Bybit 历史缓存",
+      bars: snapshots[index].bars,
+    });
+  }
+});
+it("serves old bare-symbol chart rows only for 15m during an outage", async () => {
+  const legacy = [
+    {
+      endAt: start,
+      open: 100,
+      high: 101,
+      low: 99,
+      close: 100,
+      volume: 1,
+      complete: true,
+    },
+  ];
+  db.prepare("INSERT INTO perp_chart_cache VALUES (?,?,?)").run(
+    symbol,
+    now - min,
+    JSON.stringify(legacy)
+  );
+  feed(() => new Response("Offline", { status: 503 }));
+  for (const p of [1, 3, 5] as const) {
+    expect(await getPerpMarket(db, symbol, p)).toMatchObject({
+      interval: p,
+      bars: [],
+      source: "Bybit 行情暂不可用",
+    });
+  }
+  expect(await getPerpMarket(db, symbol, 15)).toMatchObject({
+    bars: legacy,
+    source: "Bybit 历史缓存",
+  });
 });
 it.each([
   ["stale age", { time: now - 5000 }],

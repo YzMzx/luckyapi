@@ -172,6 +172,13 @@ function exchangeByKey(db: Db, id: number, key: string) {
     )
     .get(id, key) as Exchange | undefined;
 }
+function pendingKey(db: Db, user: number, key: string) {
+  return db
+    .prepare(
+      "SELECT 1 FROM perp_pending_orders WHERE user_id=? AND request_key=?"
+    )
+    .get(user, key);
+}
 function conflict(): never {
   return fail("请求键已用于不同参数");
 }
@@ -261,7 +268,11 @@ export function exchangePerp(
           conflict();
         return prior;
       }
-      if (orderByKey(db, user, input.requestKey)) conflict();
+      if (
+        orderByKey(db, user, input.requestKey) ||
+        pendingKey(db, user, input.requestKey)
+      )
+        conflict();
       const now = Date.now(),
         ledger = drizzle(db, { schema });
       const rules = readPerpConfig(db);
@@ -354,7 +365,7 @@ function getPosition(db: Db, user: number, symbol: string) {
     )
     .get(user, symbol) as Position | undefined;
 }
-function describePosition(p: Position) {
+export function describePosition(p: Position) {
   const buy = p.side === "long";
   const equityBase = BigInt(
     buy
@@ -483,7 +494,11 @@ function recordOrder(
   return { id: Number(res.lastInsertRowid), ...r };
 }
 function replay(db: Db, user: number, input: PerpOrderInput) {
-  if (exchangeByKey(db, user, input.requestKey)) conflict();
+  if (
+    exchangeByKey(db, user, input.requestKey) ||
+    pendingKey(db, user, input.requestKey)
+  )
+    conflict();
   const old = orderByKey(db, user, input.requestKey);
   if (
     old &&
@@ -495,7 +510,7 @@ function replay(db: Db, user: number, input: PerpOrderInput) {
     conflict();
   return old;
 }
-function isFresh(q: Mark) {
+export function isFresh(q: Mark) {
   const now = Date.now();
   return (
     Number.isSafeInteger(q.asOf) &&
@@ -557,6 +572,12 @@ function closePosition(
     -sign(p.side) * entry,
     -sign(p.side) * quantity
   );
+  if (quantity === p.quantityAtoms) {
+    // A reduce-only order belongs to this position, not to any subsequent reopen.
+    db.prepare(
+      "UPDATE perp_pending_orders SET status='cancelled',reason='原仓位已全部平仓',updated_at=? WHERE user_id=? AND symbol=? AND action='close' AND status IN ('pending','triggered') AND request_key IS NOT ?"
+    ).run(q.asOf, p.userId, p.symbol, key);
+  }
   return recordOrder(db, p.userId, key, {
     symbol: p.symbol,
     action,
@@ -570,7 +591,8 @@ function closePosition(
     createdAt: q.asOf,
   });
 }
-function fillOrder(
+// Internal execution primitive. Caller owns the immediate transaction and quote validation.
+export function fillOrder(
   db: Db,
   user: number,
   input: PerpOrderInput,

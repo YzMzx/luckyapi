@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { listPerpPositions } from "./adminPerpPositions";
 import { perpSettingsAdminRouter } from "./adminPerpSettings";
 import { randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
@@ -204,6 +205,7 @@ export const adminRouter = createRouter({
   authSettings: authSettingsAdminRouter,
   financeSettings: financeSettingsAdminRouter,
   perpSettings: perpSettingsAdminRouter,
+  listPerpPositions,
   monitoring: monitoringAdminRouter,
   userDetail: userDetailProcedure,
   userPolicy: createRouter({ update: updateUserPolicyProcedure }),
