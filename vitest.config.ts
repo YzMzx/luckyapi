@@ -21,6 +21,8 @@ export default defineConfig({
       "contracts/**/*.test.ts",
       "src/components/level-badge/**/*.test.ts",
       "src/pages/admin/PerpSettings.test.ts",
+      "src/pages/admin/ent/SevenPick.test.ts",
+      "src/pages/SevenPickCountdown.test.ts",
       "src/pages/perp/**/*.test.ts",
     ],
   },

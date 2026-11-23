@@ -11,7 +11,7 @@ export const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 const BEIJING_OFFSET = 8 * 60 * MINUTE_MS;
 
-export function beijingDayStart(ms: number) {
+function assertSevenPickTime(ms: number) {
   if (
     !Number.isSafeInteger(ms) ||
     ms < 0 ||
@@ -19,6 +19,10 @@ export function beijingDayStart(ms: number) {
   ) {
     throw new RangeError("无效时间");
   }
+}
+
+export function beijingDayStart(ms: number) {
+  assertSevenPickTime(ms);
   return Math.floor((ms + BEIJING_OFFSET) / DAY_MS) * DAY_MS - BEIJING_OFFSET;
 }
 
@@ -122,6 +126,7 @@ export type SevenPickConfig = SevenPickConfigInput & {
   id: number | null;
   effectiveAt: number;
   createdAt: number;
+  canceledAt: number | null;
 };
 
 function defaultConfig(): SevenPickConfig {
@@ -129,6 +134,7 @@ function defaultConfig(): SevenPickConfig {
     id: null,
     effectiveAt: 0,
     createdAt: 0,
+    canceledAt: null,
     enabled: false,
     openMinutes: Array.from({ length: 9 }, (_, i) => (13 + i) * 60),
     closeAfterMinutes: 10,
@@ -150,6 +156,7 @@ type ConfigRow = {
   id: number;
   effectiveAt: number;
   createdAt: number;
+  canceledAt: number | null;
   enabled: 0 | 1;
   openMinutesJson: string;
   closeAfterMinutes: number;
@@ -160,16 +167,19 @@ type ConfigRow = {
 };
 
 const SELECT_CONFIG =
-  "SELECT id, effective_at AS effectiveAt, created_at AS createdAt, enabled, " +
-  "open_minutes_json AS openMinutesJson, close_after_minutes AS closeAfterMinutes, " +
-  "draw_after_minutes AS drawAfterMinutes, min_stake_units AS minStakeUnits, " +
-  "max_stake_units AS maxStakeUnits, multipliers_json AS multipliersJson FROM seven_pick_config_versions";
+  "SELECT v.id, v.effective_at AS effectiveAt, v.created_at AS createdAt, " +
+  "c.canceled_at AS canceledAt, v.enabled, " +
+  "v.open_minutes_json AS openMinutesJson, v.close_after_minutes AS closeAfterMinutes, " +
+  "v.draw_after_minutes AS drawAfterMinutes, v.min_stake_units AS minStakeUnits, " +
+  "v.max_stake_units AS maxStakeUnits, v.multipliers_json AS multipliersJson " +
+  "FROM seven_pick_config_versions v LEFT JOIN seven_pick_config_cancellations c ON c.config_version_id=v.id";
 
 function readVersion(db: Database.Database, row: ConfigRow): SevenPickConfig {
   const {
     id,
     effectiveAt,
     createdAt,
+    canceledAt,
     enabled,
     openMinutesJson,
     multipliersJson,
@@ -185,6 +195,7 @@ function readVersion(db: Database.Database, row: ConfigRow): SevenPickConfig {
     id,
     effectiveAt,
     createdAt,
+    canceledAt,
     ...sevenPickConfigInput.parse({
       ...rest,
       enabled: enabled === 1,
@@ -202,7 +213,7 @@ export function getSevenPickConfig(
   const row = db
     .prepare<[number], ConfigRow>(
       SELECT_CONFIG +
-        " WHERE effective_at<=? ORDER BY effective_at DESC,id DESC LIMIT 1"
+        " WHERE v.effective_at<=? AND c.config_version_id IS NULL ORDER BY v.effective_at DESC,v.id DESC LIMIT 1"
     )
     .get(atMs);
   return row ? readVersion(db, row) : defaultConfig();
@@ -212,18 +223,97 @@ export function getLatestSevenPickConfig(
   db: Database.Database
 ): SevenPickConfig {
   const row = db
-    .prepare<[], ConfigRow>(SELECT_CONFIG + " ORDER BY id DESC LIMIT 1")
+    .prepare<[], ConfigRow>(SELECT_CONFIG + " ORDER BY v.id DESC LIMIT 1")
     .get();
   return row ? readVersion(db, row) : defaultConfig();
 }
 
-export function listSevenPickConfigVersions(db: Database.Database, limit = 20) {
+export function getNextSevenPickConfig(
+  db: Database.Database,
+  nowMs = Date.now()
+): SevenPickConfig | null {
+  const row = db
+    .prepare<[number], ConfigRow>(
+      SELECT_CONFIG +
+        " WHERE v.effective_at>? AND c.config_version_id IS NULL ORDER BY v.effective_at ASC,v.id DESC LIMIT 1"
+    )
+    .get(nowMs);
+  return row ? readVersion(db, row) : null;
+}
+
+export function listSevenPickConfigVersions(
+  db: Database.Database,
+  limit = 20,
+  beforeId?: number
+) {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
     throw new RangeError("无效页大小");
-  return db
-    .prepare<[number], ConfigRow>(SELECT_CONFIG + " ORDER BY id DESC LIMIT ?")
-    .all(limit)
-    .map(row => readVersion(db, row));
+  if (
+    beforeId !== undefined &&
+    (!Number.isSafeInteger(beforeId) || beforeId < 1)
+  )
+    throw new RangeError("无效版本游标");
+  const rows =
+    beforeId === undefined
+      ? db
+          .prepare<[number], ConfigRow>(SELECT_CONFIG + " ORDER BY v.id DESC LIMIT ?")
+          .all(limit)
+      : db
+          .prepare<[number, number], ConfigRow>(
+            SELECT_CONFIG + " WHERE v.id<? ORDER BY v.id DESC LIMIT ?"
+          )
+          .all(beforeId, limit);
+  return rows.map(row => readVersion(db, row));
+}
+
+function insertSevenPickConfig(
+  db: Database.Database,
+  config: SevenPickConfigInput,
+  effectiveAt: number,
+  nowMs: number
+): SevenPickConfig {
+  const openMinutes = [...config.openMinutes].sort((a, b) => a - b);
+  const items = [...config.items].sort((a, b) => a.position - b.position);
+  const id = Number(
+    db
+      .prepare(
+        "INSERT INTO seven_pick_config_versions " +
+          "(effective_at,created_at,enabled,open_minutes_json,close_after_minutes,draw_after_minutes,min_stake_units,max_stake_units,multipliers_json) " +
+          "VALUES (?,?,?,?,?,?,?,?,?)"
+      )
+      .run(
+        effectiveAt,
+        nowMs,
+        Number(config.enabled),
+        JSON.stringify(openMinutes),
+        config.closeAfterMinutes,
+        config.drawAfterMinutes,
+        config.minStakeUnits,
+        config.maxStakeUnits,
+        JSON.stringify(config.multipliers)
+      ).lastInsertRowid
+  );
+  const insertItem = db.prepare(
+    "INSERT INTO seven_pick_items (config_version_id,item_id,name,description,position,image_url) VALUES (?,?,?,?,?,?)"
+  );
+  for (const item of items)
+    insertItem.run(
+      id,
+      item.id,
+      item.name,
+      item.description,
+      item.position,
+      item.imageUrl
+    );
+  return {
+    ...config,
+    id,
+    effectiveAt,
+    createdAt: nowMs,
+    canceledAt: null,
+    openMinutes,
+    items,
+  };
 }
 
 export function saveSevenPickConfig(
@@ -233,49 +323,36 @@ export function saveSevenPickConfig(
 ): SevenPickConfig {
   const config = sevenPickConfigInput.parse(input);
   const effectiveAt = beijingDayStart(nowMs) + DAY_MS;
-  const openMinutes = [...config.openMinutes].sort((a, b) => a - b);
-  const items = [...config.items].sort((a, b) => a.position - b.position);
+  return db
+    .transaction(() => insertSevenPickConfig(db, config, effectiveAt, nowMs))
+    .immediate();
+}
+
+export function activateSevenPickConfig(
+  db: Database.Database,
+  versionId: number,
+  nowMs = Date.now()
+): SevenPickConfig | null {
+  if (!Number.isSafeInteger(versionId) || versionId < 1) return null;
+  assertSevenPickTime(nowMs);
   return db
     .transaction(() => {
-      const id = Number(
-        db
-          .prepare(
-            "INSERT INTO seven_pick_config_versions " +
-              "(effective_at,created_at,enabled,open_minutes_json,close_after_minutes,draw_after_minutes,min_stake_units,max_stake_units,multipliers_json) " +
-              "VALUES (?,?,?,?,?,?,?,?,?)"
-          )
-          .run(
-            effectiveAt,
-            nowMs,
-            Number(config.enabled),
-            JSON.stringify(openMinutes),
-            config.closeAfterMinutes,
-            config.drawAfterMinutes,
-            config.minStakeUnits,
-            config.maxStakeUnits,
-            JSON.stringify(config.multipliers)
-          ).lastInsertRowid
+      const row = db
+        .prepare<[number], ConfigRow>(SELECT_CONFIG + " WHERE v.id=?")
+        .get(versionId);
+      if (!row) return null;
+      const active = insertSevenPickConfig(
+        db,
+        { ...readVersion(db, row), enabled: true },
+        nowMs,
+        nowMs
       );
-      const insertItem = db.prepare(
-        "INSERT INTO seven_pick_items (config_version_id,item_id,name,description,position,image_url) VALUES (?,?,?,?,?,?)"
-      );
-      for (const item of items)
-        insertItem.run(
-          id,
-          item.id,
-          item.name,
-          item.description,
-          item.position,
-          item.imageUrl
-        );
-      return {
-        ...config,
-        id,
-        effectiveAt,
-        createdAt: nowMs,
-        openMinutes,
-        items,
-      };
+      db.prepare(
+        "INSERT INTO seven_pick_config_cancellations (config_version_id,canceled_at) " +
+          "SELECT v.id,? FROM seven_pick_config_versions v WHERE v.effective_at>? AND NOT EXISTS " +
+          "(SELECT 1 FROM seven_pick_config_cancellations c WHERE c.config_version_id=v.id)"
+      ).run(nowMs, nowMs);
+      return active;
     })
     .immediate();
 }

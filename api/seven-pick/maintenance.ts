@@ -37,9 +37,9 @@ function scheduleUpcomingRounds(db: Db, now: number) {
       if (opensAt > now && opensAt <= now + SCHEDULE_AHEAD_MS) {
         try { createSevenPickRound(db, opensAt, now); }
         catch (error) {
-          // Another process can commit an admin pause after our first read.
-          // Skip new slots without dropping settlement work for existing rounds.
-          if (!(error instanceof SevenPickError) || error.code !== "BETTING_DISABLED") throw error;
+          // A pause or a locked betting window can prevent this slot only.
+          // Still process other slots and advance the existing rounds.
+          if (!(error instanceof SevenPickError) || (error.code !== "BETTING_DISABLED" && error.code !== "CONFLICT")) throw error;
         }
       }
     }

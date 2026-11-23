@@ -5,25 +5,32 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PERP_ENGINE_SCHEMA } from "../perp/schema";
 import {
+  MINUTE_MS,
+  activateSevenPickConfig,
   getLatestSevenPickConfig,
+  getNextSevenPickConfig,
   getSevenPickConfig,
   listSevenPickConfigVersions,
   saveSevenPickConfig,
   sevenPickConfigInput,
 } from "./config";
-import { QUICKNET } from "./drand";
+import { QUICKNET, quicknetRoundAtOrAfter } from "./drand";
 import {
   createSevenPickRound,
+  getSevenPickManualStartBlock,
   getSevenPickRound,
   getSevenPickSnapshot,
   listSevenPickOrders,
   openSevenPickRound,
   placeSevenPickOrder,
   placeSevenPickOrderForTest,
+  startManualSevenPickRound,
 } from "./engine";
+import { ensureSevenPickLifecycleSchema } from "./lifecycle-schema";
+import { tickSevenPickMaintenance } from "./maintenance";
 import { sevenPickItemMask } from "./risk";
 import { setSevenPickRuntime } from "./release";
-import { ensureSevenPickSchema } from "./schema";
+import { ensureSevenPickSchema, SEVEN_PICK_SCHEMA } from "./schema";
 import { applySevenPickCash, readSevenPickCash } from "./wallet";
 
 const NOW = Date.UTC(2026, 10, 23, 15, 59, 59); // 23:59:59 Beijing
@@ -150,6 +157,97 @@ describe("七星寻宝 configuration and locked snapshot", () => {
     expect(round.algorithmVersion).toBe("sha256-fy32-v1");
   });
 
+  it("resolves the earliest future effective time, latest ID on ties, and supports a strict ID cursor", () => {
+    expect(getNextSevenPickConfig(db, NOW)).toBeNull();
+    const far = saveSevenPickConfig(db, config(db), EFFECTIVE);
+    const first = saveSevenPickConfig(db, config(db), NOW - 1);
+    const tied = saveSevenPickConfig(db, { ...config(db), enabled: false }, NOW);
+    expect(getNextSevenPickConfig(db, NOW)).toEqual(tied);
+    expect(getNextSevenPickConfig(db, EFFECTIVE)).toEqual(far);
+    expect(getNextSevenPickConfig(db, far.effectiveAt)).toBeNull();
+    expect(listSevenPickConfigVersions(db, 2)).toEqual([tied, first]);
+    expect(listSevenPickConfigVersions(db, 2, first.id!)).toEqual([far]);
+    expect(listSevenPickConfigVersions(db, 2, far.id!)).toEqual([]);
+  });
+
+  it("activates enabled clones of pending and historical rules and cancels pending schedules atomically", () => {
+    const previous = saveSevenPickConfig(db, config(db), NOW);
+    const input = config(db);
+    input.items[0] = { ...input.items[0], name: "曾排期宝物", description: "旧版本规则" };
+    input.multipliers[7] = 75_000;
+    const selected = saveSevenPickConfig(db, { ...input, enabled: false }, EFFECTIVE);
+    const other = saveSevenPickConfig(db, config(db), EFFECTIVE + 1);
+    const activateAt = EFFECTIVE + 2;
+    expect(activateSevenPickConfig(db, 400_000, activateAt)).toBeNull();
+    expect(getNextSevenPickConfig(db, activateAt)).toEqual(other);
+    expect(listSevenPickConfigVersions(db)).toEqual([other, selected, previous]);
+
+    const active = activateSevenPickConfig(db, selected.id!, activateAt)!;
+    expect(active.id).toBeGreaterThan(other.id!);
+    expect(active).toEqual({
+      ...selected, id: active.id, enabled: true, effectiveAt: activateAt, createdAt: activateAt,
+    });
+    expect(getSevenPickConfig(db, activateAt - 1)).toEqual(previous);
+    expect(getSevenPickConfig(db, activateAt)).toEqual(active);
+    expect(getSevenPickConfig(db, selected.effectiveAt)).toEqual(active);
+    expect(getNextSevenPickConfig(db, activateAt)).toBeNull();
+    expect(getLatestSevenPickConfig(db)).toEqual(active);
+    expect(listSevenPickConfigVersions(db)).toEqual([
+      active, { ...other, canceledAt: activateAt }, { ...selected, canceledAt: activateAt }, previous,
+    ]);
+    expect(db.prepare("SELECT 1 FROM seven_pick_rounds").get()).toBeUndefined();
+
+    const restored = activateSevenPickConfig(db, selected.id!, activateAt)!;
+    expect(restored).toEqual({ ...active, id: restored.id });
+    expect(restored.id).toBeGreaterThan(active.id!);
+    expect(getSevenPickConfig(db, activateAt)).toEqual(restored);
+    expect(listSevenPickConfigVersions(db, 1, other.id!)).toEqual([{ ...selected, canceledAt: activateAt }]);
+    const historical = activateSevenPickConfig(db, previous.id!, selected.effectiveAt + 1)!;
+    expect(historical).toEqual({
+      ...previous, id: historical.id, effectiveAt: selected.effectiveAt + 1, createdAt: selected.effectiveAt + 1,
+    });
+    const savedAgain = saveSevenPickConfig(db, input, selected.effectiveAt + 2);
+    expect(savedAgain.effectiveAt).toBe(selected.effectiveAt + 24 * HOUR);
+    expect(getSevenPickConfig(db, savedAgain.effectiveAt - 1)).toEqual(historical);
+    expect(getNextSevenPickConfig(db, savedAgain.effectiveAt - 1)).toEqual(savedAgain);
+    expect(getSevenPickConfig(db, savedAgain.effectiveAt)).toEqual(savedAgain);
+  });
+
+  it("rolls back the cloned configuration when pending cancellation fails", () => {
+    const pending = saveSevenPickConfig(db, config(db), NOW);
+    db.exec("CREATE TRIGGER fail_cancel BEFORE INSERT ON seven_pick_config_cancellations BEGIN SELECT RAISE(ABORT, 'injected cancellation fault'); END;");
+    expect(() => activateSevenPickConfig(db, pending.id!, NOW)).toThrow("injected cancellation fault");
+    expect(listSevenPickConfigVersions(db)).toEqual([pending]);
+    expect(getNextSevenPickConfig(db, NOW)).toEqual(pending);
+    expect(getSevenPickConfig(db, NOW).id).toBeNull();
+  });
+
+  it("upgrades a legacy database without changing existing configs, items, or locked rounds", () => {
+    const legacy = new Database(":memory:");
+    try {
+      legacy.pragma("foreign_keys = ON");
+      legacy.exec("CREATE TABLE users (id INTEGER PRIMARY KEY); CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);");
+      legacy.exec(SEVEN_PICK_SCHEMA.replace("effective_at>=created_at", "effective_at>created_at"));
+      ensureSevenPickLifecycleSchema(legacy);
+      const saved = saveSevenPickConfig(legacy, config(legacy), NOW);
+      const round = createSevenPickRound(legacy, OPENS, OPENS - 1);
+      expect(() => activateSevenPickConfig(legacy, saved.id!, OPENS - 1)).toThrow(/CHECK constraint/);
+      legacy.exec("DROP TABLE seven_pick_config_cancellations"); // Absent in the old deployment.
+      ensureSevenPickSchema(legacy);
+      ensureSevenPickSchema(legacy);
+      expect(getLatestSevenPickConfig(legacy)).toEqual(saved);
+      expect(getSevenPickRound(legacy, round.id)).toEqual(round);
+      expect(legacy.pragma("foreign_keys", { simple: true })).toBe(1);
+      expect(legacy.pragma("foreign_key_check")).toEqual([]);
+      expect(activateSevenPickConfig(legacy, saved.id!, OPENS - 1)).toMatchObject({
+        items: saved.items, effectiveAt: OPENS - 1, createdAt: OPENS - 1,
+      });
+      expect(getSevenPickRound(legacy, round.id)).toEqual(round);
+    } finally {
+      legacy.close();
+    }
+  });
+
   it("rejects invalid item IDs, schedule overlaps, amounts and unsafe image references", () => {
     const input = config(db);
     expect(
@@ -242,6 +340,326 @@ describe("七星寻宝 configuration and locked snapshot", () => {
         OPENS + 1
       )
     ).toThrow(expect.objectContaining({ code: "ROUND_CLOSED" }));
+  });
+});
+
+describe("automatic round scheduling after config activation", () => {
+  it("keeps locked scheduled windows, skips overlapping slots, and creates later slots at the exact close", async () => {
+    ensureSevenPickLifecycleSchema(db);
+    const existing = makeRound(db, MIN_LIMIT, false);
+    const m = 13 * 60;
+    const input = { ...config(db), openMinutes: [m - 1, m + 10], maxStakeUnits: 41_000 };
+    const selected = saveSevenPickConfig(db, input, OPENS - 3 * MINUTE_MS);
+    const now = OPENS - 2 * MINUTE_MS;
+    const active = activateSevenPickConfig(db, selected.id!, now)!;
+    expect(() => createSevenPickRound(db, OPENS - MINUTE_MS, now)).toThrow(
+      expect.objectContaining({ code: "CONFLICT" })
+    );
+    const onError = vi.fn();
+    await tickSevenPickMaintenance(db, { now, onError });
+    expect(getSevenPickRound(db, existing.id)).toEqual(existing);
+    expect(getSevenPickSnapshot(db, now).round).toEqual(existing);
+    expect(createSevenPickRound(db, OPENS, now)).toEqual(existing);
+    await tickSevenPickMaintenance(db, { now: OPENS, onError });
+    expect(getSevenPickRound(db, existing.id)?.status).toBe("open");
+    await tickSevenPickMaintenance(db, { now: existing.closesAt - 1, onError });
+    expect(db.prepare("SELECT config_version_id FROM seven_pick_rounds WHERE opens_at=?").pluck().get(existing.closesAt)).toBe(active.id);
+    await tickSevenPickMaintenance(db, { now: existing.closesAt, onError });
+    expect(getSevenPickSnapshot(db, existing.closesAt).round).toMatchObject({
+      status: "open", opensAt: existing.closesAt, configVersionId: active.id, maxStakeUnits: 41_000,
+    });
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it.each(["open", "risk_skipped"] as const)("honors manual %s window reservations after activation", async status => {
+    ensureSevenPickLifecycleSchema(db);
+    const old = saveSevenPickConfig(db, { ...config(db), openMinutes: [14 * 60] }, NOW);
+    if (status === "open") setCash(db, 1, MIN_LIMIT * 5);
+    const manual = startManualSevenPickRound(db, old.id!, OPENS - MINUTE_MS + 1);
+    expect(manual.status).toBe(status);
+    const selected = saveSevenPickConfig(db, { ...config(db), openMinutes: [13 * 60] }, manual.opensAt + 1);
+    const active = activateSevenPickConfig(db, selected.id!, manual.opensAt + 2)!;
+    const onError = vi.fn();
+    await tickSevenPickMaintenance(db, { now: active.effectiveAt, onError });
+    const scheduled = db.prepare("SELECT config_version_id FROM seven_pick_rounds WHERE opens_at=?").pluck().get(OPENS);
+    expect(scheduled).toBe(status === "open" ? undefined : active.id);
+    expect(getSevenPickRound(db, manual.id)).toEqual(manual);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("continues scheduling activated rules across Beijing midnight but retains a pre-created pending snapshot", async () => {
+    ensureSevenPickLifecycleSchema(db);
+    const midnight = EFFECTIVE + 24 * HOUR;
+    const selected = saveSevenPickConfig(db, { ...config(db), openMinutes: [10] }, NOW);
+    const pending = saveSevenPickConfig(db, { ...config(db), openMinutes: [0, 30] }, midnight - HOUR);
+    const reserved = createSevenPickRound(db, midnight, midnight - 2);
+    setCash(db, 1, MIN_LIMIT * 5);
+    const active = activateSevenPickConfig(db, selected.id!, midnight - 1)!;
+    expect(getNextSevenPickConfig(db, midnight - 1)).toBeNull();
+    expect(getSevenPickConfig(db, midnight)).toEqual(active);
+    expect(reserved.configVersionId).toBe(pending.id);
+    expect(getSevenPickRound(db, reserved.id)).toEqual(reserved);
+
+    const onError = vi.fn();
+    await tickSevenPickMaintenance(db, { now: midnight, onError });
+    expect(getSevenPickRound(db, reserved.id)).toMatchObject({
+      status: "open", configVersionId: pending.id, opensAt: midnight,
+    });
+    const later = midnight + 10 * MINUTE_MS;
+    await tickSevenPickMaintenance(db, { now: later - 1, onError });
+    const next = db.prepare("SELECT config_version_id FROM seven_pick_rounds WHERE opens_at=?").pluck().get(later);
+    expect(next).toBe(active.id);
+    expect(onError).not.toHaveBeenCalled();
+  });
+});
+
+describe("manual seven-pick rounds", () => {
+  const MANUAL_START = OPENS - 30 * MINUTE_MS + 123;
+  const MIDNIGHT = EFFECTIVE + 24 * HOUR;
+
+  it("pins current rules and Quicknet, opens now, and accepts bets immediately", () => {
+    ensureSevenPickLifecycleSchema(db);
+    const input = config(db);
+    input.items[0].name = "手动场次宝物";
+    const active = saveSevenPickConfig(db, input, NOW);
+    const next = saveSevenPickConfig(
+      db,
+      { ...input, maxStakeUnits: 5_000 },
+      MANUAL_START
+    );
+    setCash(db, 1, MIN_LIMIT * 5);
+    expect(getSevenPickManualStartBlock(db, MANUAL_START)).toBeNull();
+    expect(() => startManualSevenPickRound(db, next.id!, MANUAL_START)).toThrow(
+      expect.objectContaining({ code: "CONFLICT" })
+    );
+    const round = startManualSevenPickRound(db, active.id!, MANUAL_START);
+    expect(round).toMatchObject({
+      configVersionId: active.id,
+      status: "open",
+      opensAt: MANUAL_START,
+      closesAt: MANUAL_START + active.closeAfterMinutes * MINUTE_MS,
+      drawAt: MANUAL_START + active.drawAfterMinutes * MINUTE_MS,
+      quicknetChainHash: QUICKNET.chainHash,
+      multipliers: active.multipliers,
+      minStakeUnits: active.minStakeUnits,
+      maxStakeUnits: active.maxStakeUnits,
+      items: active.items,
+      riskLimitUnits: String(MIN_LIMIT),
+      maxExposureUnits: "0",
+    });
+    expect(round.quicknetRound).toBe(quicknetRoundAtOrAfter(round.drawAt));
+    expect(getSevenPickSnapshot(db, MANUAL_START)).toMatchObject({
+      round,
+      bettingEnabled: true,
+    });
+    expect(() =>
+      db
+        .prepare("UPDATE seven_pick_rounds SET opens_at=0 WHERE id=?")
+        .run(round.id)
+    ).toThrow("七星寻宝场次规则不可修改");
+    expect(
+      placeSevenPickOrder(
+        db,
+        1,
+        { roundId: round.id, requestKey: "manual", bets: [bet()] },
+        MANUAL_START
+      )
+    ).toMatchObject({ roundId: round.id, createdAt: MANUAL_START });
+    expect(getSevenPickConfig(db, MIDNIGHT)).toEqual(next);
+  });
+
+  it("blocks disabled and paused configurations without creating any round", () => {
+    expect(getSevenPickManualStartBlock(db, NOW)).toMatch(/未启用/);
+    expect(() => startManualSevenPickRound(db, 1, NOW)).toThrow(
+      expect.objectContaining({ code: "BETTING_DISABLED" })
+    );
+    const active = saveSevenPickConfig(db, config(db), NOW);
+    setSevenPickRuntime(db, "paused", true, 1);
+    const block = getSevenPickManualStartBlock(db, MANUAL_START);
+    expect(block).toMatch(/暂停/);
+    expect(() =>
+      startManualSevenPickRound(db, active.id!, MANUAL_START)
+    ).toThrow(
+      expect.objectContaining({ code: "BETTING_DISABLED", message: block })
+    );
+    expect(db.prepare("SELECT 1 FROM seven_pick_rounds").get()).toBeUndefined();
+  });
+
+  it("checks configured betting slots even before maintenance materializes them and allows exact boundaries", () => {
+    const active = saveSevenPickConfig(db, config(db), NOW);
+    setCash(db, 1, MIN_LIMIT * 5);
+    const closeDelay = active.closeAfterMinutes * MINUTE_MS;
+    for (const time of [
+      OPENS - closeDelay + 1,
+      OPENS,
+      OPENS + closeDelay - 1,
+    ]) {
+      expect(getSevenPickManualStartBlock(db, time)).toMatch(/定时场次/);
+      expect(() => startManualSevenPickRound(db, active.id!, time)).toThrow(
+        expect.objectContaining({ code: "CONFLICT" })
+      );
+    }
+    expect(db.prepare("SELECT 1 FROM seven_pick_rounds").get()).toBeUndefined();
+    const before = startManualSevenPickRound(
+      db,
+      active.id!,
+      OPENS - closeDelay
+    );
+    expect(before.closesAt).toBe(OPENS);
+    const scheduled = createSevenPickRound(db, OPENS, OPENS - 1);
+    openSevenPickRound(db, scheduled.id, OPENS);
+    const after = startManualSevenPickRound(db, active.id!, scheduled.closesAt);
+    expect(after.opensAt).toBeLessThan(scheduled.drawAt);
+  });
+
+  it("blocks already-materialized current/future slots even if the active config no longer lists them", () => {
+    const old = saveSevenPickConfig(db, config(db), NOW - 100);
+    const existing = createSevenPickRound(db, OPENS, NOW - 50);
+    const active = saveSevenPickConfig(
+      db,
+      { ...config(db), openMinutes: [15 * 60] },
+      NOW
+    );
+    expect(existing.configVersionId).toBe(old.id);
+    for (const time of [OPENS - 2 * MINUTE_MS, OPENS + 1]) {
+      expect(getSevenPickManualStartBlock(db, time)).toMatch(/已有场次/);
+      expect(() => startManualSevenPickRound(db, active.id!, time)).toThrow(
+        expect.objectContaining({ code: "CONFLICT" })
+      );
+    }
+    expect(getSevenPickRound(db, existing.id)).toEqual(existing);
+  });
+
+  it("checks the next Beijing-day config and protects later rollover edits without changing scheduling", async () => {
+    ensureSevenPickLifecycleSchema(db);
+    const active = saveSevenPickConfig(db, config(db), NOW);
+    const start = MIDNIGHT - active.closeAfterMinutes * MINUTE_MS;
+    setCash(db, 1, MIN_LIMIT * 5);
+    expect(getSevenPickManualStartBlock(db, start + 1)).toMatch(/午夜/);
+    const early = { ...config(db), openMinutes: [0] };
+    saveSevenPickConfig(db, early, start - 1);
+    expect(getSevenPickManualStartBlock(db, start + 1)).toMatch(/定时场次/);
+    const manual = startManualSevenPickRound(db, active.id!, start);
+    expect(manual.closesAt).toBe(MIDNIGHT);
+    expect(manual.drawAt).toBeGreaterThan(MIDNIGHT);
+
+    // Saving again during the manual window may affect next-day schedule only.
+    const next = saveSevenPickConfig(
+      db,
+      { ...early, closeAfterMinutes: 5 },
+      start + 1
+    );
+    const noNetwork = vi.fn(() => {
+      throw new Error("Unexpected network call");
+    });
+    await tickSevenPickMaintenance(db, {
+      now: MIDNIGHT - 1,
+      onError: noNetwork,
+    });
+    const scheduled = getSevenPickSnapshot(db, MIDNIGHT).round;
+    expect(scheduled).toMatchObject({
+      status: "scheduled",
+      configVersionId: next.id,
+      opensAt: MIDNIGHT,
+      closesAt: MIDNIGHT + 5 * MINUTE_MS,
+    });
+    await tickSevenPickMaintenance(db, { now: MIDNIGHT, onError: noNetwork });
+    expect(getSevenPickRound(db, manual.id)?.status).toBe("sealed");
+    expect(getSevenPickRound(db, scheduled!.id)?.status).toBe("open");
+    expect(noNetwork).not.toHaveBeenCalled();
+  });
+
+  it("retains skipped attempts and their risk lock without displacing the previous public selection", () => {
+    const previous = makeRound(db);
+    const start = previous.closesAt;
+    setCash(db, 3, (MIN_LIMIT - 1) * 5 - 2_000_000);
+    expect(getSevenPickManualStartBlock(db, start)).toBeNull();
+    const skipped = startManualSevenPickRound(
+      db,
+      previous.configVersionId,
+      start
+    );
+    expect(skipped).toMatchObject({
+      status: "risk_skipped",
+      riskLimitUnits: String(MIN_LIMIT - 1),
+      maxExposureUnits: "0",
+    });
+    expect(getSevenPickRound(db, skipped.id)).toEqual(skipped);
+    expect(getSevenPickSnapshot(db, start)).toMatchObject({
+      round: previous,
+      bettingEnabled: false,
+    });
+    expect(getSevenPickSnapshot(db, skipped.closesAt)).toMatchObject({
+      round: previous,
+    });
+    expect(() =>
+      startManualSevenPickRound(db, previous.configVersionId, start)
+    ).toThrow(expect.objectContaining({ code: "CONFLICT" }));
+    setCash(db, 3, MIN_LIMIT * 5);
+    const retry = startManualSevenPickRound(
+      db,
+      previous.configVersionId,
+      start + 1
+    );
+    expect(retry.status).toBe("open");
+    expect(retry.id).not.toBe(skipped.id);
+    expect(getSevenPickRound(db, skipped.id)).toEqual(skipped);
+    expect(getSevenPickSnapshot(db, start + 1)).toMatchObject({
+      round: retry,
+      bettingEnabled: true,
+    });
+  });
+
+  it("rolls back unexpected risk errors instead of returning a skipped result", () => {
+    const active = saveSevenPickConfig(db, config(db), NOW);
+    db.exec(
+      "CREATE TRIGGER fail_risk BEFORE INSERT ON seven_pick_risk BEGIN SELECT RAISE(ABORT, 'injected risk fault'); END;"
+    );
+    expect(() =>
+      startManualSevenPickRound(db, active.id!, MANUAL_START)
+    ).toThrow("injected risk fault");
+    expect(db.prepare("SELECT 1 FROM seven_pick_rounds").get()).toBeUndefined();
+    expect(
+      db.prepare("SELECT 1 FROM seven_pick_manual_rounds").get()
+    ).toBeUndefined();
+  });
+
+  it("serializes competing manual starts across database connections", () => {
+    const dir = mkdtempSync(join(tmpdir(), "seven-pick-manual-"));
+    const file = join(dir, "shared.db");
+    const left = new Database(file, { timeout: 0 });
+    const right = new Database(file, { timeout: 0 });
+    try {
+      init(left);
+      right.pragma("foreign_keys = ON");
+      const active = saveSevenPickConfig(left, config(left), NOW);
+      setCash(left, 1, MIN_LIMIT * 5);
+      left
+        .transaction(() => {
+          const round = startManualSevenPickRound(
+            left,
+            active.id!,
+            MANUAL_START
+          );
+          expect(round.status).toBe("open");
+          expect(() =>
+            startManualSevenPickRound(right, active.id!, MANUAL_START + 1)
+          ).toThrow(expect.objectContaining({ code: "SQLITE_BUSY" }));
+        })
+        .immediate();
+      for (const time of [MANUAL_START, MANUAL_START + 1]) {
+        expect(() =>
+          startManualSevenPickRound(right, active.id!, time)
+        ).toThrow(expect.objectContaining({ code: "CONFLICT" }));
+      }
+      expect(
+        right.prepare("SELECT count(*) FROM seven_pick_rounds").pluck().get()
+      ).toBe(1);
+    } finally {
+      right.close();
+      left.close();
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 });
 

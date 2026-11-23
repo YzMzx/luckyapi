@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { SevenPickCountdown } from "./SevenPickCountdown";
 import { Gem } from "lucide-react";
 import { Link } from "react-router";
 import { SiteNav } from "@/components/SiteNav";
@@ -36,18 +37,6 @@ function stakeUnits(amount: string) {
   if (!betAmountPattern.test(amount)) return NaN;
   const [whole, fraction = ""] = amount.split(".");
   return Number(whole) * 1000 + Number(fraction.padEnd(3, "0"));
-}
-
-function RoundCountdown({ deadline, serverOffset, label }: { deadline: number; serverOffset: number; label: string }) {
-  const [clock, setClock] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setClock(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
-  const remaining = Math.max(0, Math.ceil((deadline - clock - serverOffset) / 1000));
-  const display = [Math.floor(remaining / 3600), Math.floor(remaining / 60) % 60, remaining % 60]
-    .map((value) => String(value).padStart(2, "0")).join(":");
-  return remaining > 0 ? <p className="font-num tabular-nums">{label} <span role="timer">{display}</span></p> : null;
 }
 
 function Selection({ items, rules, roundId, acceptingOrders, ordersInRound }: {
@@ -187,8 +176,7 @@ export default function SevenPick() {
             {liveRound && <p className="text-sm">固定 Quicknet 轮次：<code>{liveRound.quicknetRound}</code> · <code>{liveRound.algorithmVersion}</code></p>}
             <p className="text-sm text-muted-foreground">每场在开盘前公开绑定轮次，验签通过后开奖。RFC 3161 是可选的封盘时间凭证，不影响派奖。</p>
             {!info.paused && !info.configured && <p className="text-sm text-muted-foreground">当前生效的玩法配置未启用，可试选。</p>}
-            {liveRound && liveRound.status === "open" && <RoundCountdown deadline={liveRound.closesAt} serverOffset={info.now - overview.dataUpdatedAt} label="距离封盘" />}
-            {liveRound && liveRound.status === "scheduled" && <RoundCountdown deadline={liveRound.opensAt} serverOffset={info.now - overview.dataUpdatedAt} label="距离开盘" />}
+            {liveRound && <SevenPickCountdown key={liveRound.id} round={liveRound} serverOffset={info.now - overview.dataUpdatedAt} />}
             {info.acceptingOrders && !user?.onboarded && <p className="text-sm">登录并完成注册后可投注。</p>}
             <p className="text-sm text-muted-foreground">计划开盘（北京时间）：{info.preview.openMinutes.map(hhmm).join("、")} · 开盘后 {info.preview.closeAfterMinutes} 分钟封盘、{info.preview.drawAfterMinutes} 分钟目标开奖。</p>
             <p className="text-sm text-muted-foreground">每场最多 5 组，每组 {money(rules.minStakeUnits)}–{money(rules.maxStakeUnits)} 模拟 USDT；返还倍率含本金。</p>

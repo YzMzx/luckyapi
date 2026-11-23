@@ -20,7 +20,7 @@ it("requires admin control, ignores retired env flags and immediately pauses or 
   const userId = db.insert(users).values({ linuxdoId: randomUUID(), username: "treasure-player", groupName: "treasure-player" }).returning().get().id;
   const memberToken = randomUUID();
   const adminToken = randomUUID();
-  const expiresAt = new Date(beforeMidnight.getTime() + 24 * 3600_000);
+  const expiresAt = new Date(beforeMidnight.getTime() + 48 * 3600_000);
   db.insert(sessions).values({ token: memberToken, userId, expiresAt }).run();
   const adminRow = db.insert(adminSessions).values({ token: adminToken, expiresAt }).returning().get();
   const caller = (cookie = "") => appRouter.createCaller({
@@ -51,6 +51,10 @@ it("requires admin control, ignores retired env flags and immediately pauses or 
   const audit = db.$client.prepare("SELECT detail FROM admin_logs WHERE action='seven_pick_config_saved'").pluck().all();
   expect(audit).toEqual([JSON.stringify({ versionId: saved.id, effectiveAt: saved.effectiveAt })]);
   expect((await admin.admin.sevenPick.overview()).active.enabled).toBe(false);
+  expect((await admin.admin.sevenPick.overview()).manualStartBlock).toBeTruthy();
+  await expect(guest.admin.sevenPick.startManualRound({ expectedVersionId: saved.id! })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(member.admin.sevenPick.startManualRound({ expectedVersionId: saved.id! })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(admin.admin.sevenPick.startManualRound({ expectedVersionId: saved.id! })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
 
   const opensAt = Date.parse("2026-11-24T05:00:00.000Z");
   vi.setSystemTime(opensAt - 1000);
@@ -86,4 +90,68 @@ it("requires admin control, ignores retired env flags and immediately pauses or 
     { adminSessionId: adminRow.id, key: "paused", before: false, after: true },
     { adminSessionId: adminRow.id, key: "paused", before: true, after: false },
   ]);
+
+  vi.setSystemTime(round.closesAt + 1);
+  const next = await admin.admin.sevenPick.save({
+    expectedVersionId: saved.id,
+    config: { ...input.config, enabled: false },
+  });
+  const state = await admin.admin.sevenPick.overview();
+  expect(state).toMatchObject({ active: { id: saved.id, enabled: true }, latest: { id: next.id, enabled: false }, manualStartBlock: null });
+  await expect(admin.admin.sevenPick.startManualRound({ expectedVersionId: next.id! })).rejects.toMatchObject({ code: "CONFLICT" });
+  db.$client.prepare("INSERT INTO settings (key,value) VALUES ('control_maintenance','1') ON CONFLICT(key) DO UPDATE SET value=excluded.value").run();
+  expect((await admin.admin.sevenPick.overview()).manualStartBlock).toContain("维护");
+  await expect(admin.admin.sevenPick.startManualRound({ expectedVersionId: saved.id! })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  db.$client.prepare("DELETE FROM settings WHERE key='control_maintenance'").run();
+  // Restore sufficient risk budget after the earlier wager reduced free cash.
+  db.$client.prepare("UPDATE perp_wallets SET cash_units=250000000 WHERE user_id=?").run(userId);
+  const manual = await admin.admin.sevenPick.startManualRound({ expectedVersionId: saved.id! });
+  expect(manual).toMatchObject({ status: "open", opensAt: round.closesAt + 1, configVersionId: saved.id });
+  expect(await guest.sevenPick.overview()).toMatchObject({ round: { id: manual.id }, acceptingOrders: true });
+  await expect(admin.admin.sevenPick.startManualRound({ expectedVersionId: saved.id! })).rejects.toMatchObject({ code: "CONFLICT" });
+  expect(db.$client.prepare("SELECT detail FROM admin_logs WHERE action='seven_pick_manual_round_started'").pluck().all().map(detail => JSON.parse(detail as string))).toEqual([
+    { adminSessionId: adminRow.id, roundId: manual.id, versionId: saved.id, status: "open", opensAt: manual.opensAt },
+  ]);
+
+  // The existing risk limit is authoritative for a manual attempt, too.
+  vi.setSystemTime(manual.closesAt + 1);
+  db.$client.prepare("UPDATE perp_wallets SET cash_units=0").run();
+  const skipped = await admin.admin.sevenPick.startManualRound({ expectedVersionId: saved.id! });
+  expect(skipped).toMatchObject({ status: "risk_skipped", riskLimitUnits: "0" });
+  expect((await guest.sevenPick.overview()).round?.id).not.toBe(skipped.id);
+  expect((await admin.admin.sevenPick.overview()).rounds[0]).toMatchObject({ id: skipped.id, status: "risk_skipped" });
+
+  const activate = { versionId: next.id!, expectedActiveVersionId: saved.id, expectedVersionId: next.id };
+  await expect(member.admin.sevenPick.activateRule(activate)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(member.admin.sevenPick.ruleVersions()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(admin.admin.sevenPick.activateRule({ ...activate, versionId: 99999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  db.$client.prepare("INSERT INTO settings (key,value) VALUES ('control_maintenance','1') ON CONFLICT(key) DO UPDATE SET value=excluded.value").run();
+  expect((await admin.admin.sevenPick.overview()).activationBlocked).toContain("维护");
+  await expect(admin.admin.sevenPick.activateRule(activate)).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  db.$client.prepare("DELETE FROM settings WHERE key='control_maintenance'").run();
+  await admin.admin.sevenPick.setRuntime({ key: "paused", value: true });
+  const activated = await admin.admin.sevenPick.activateRule(activate);
+  expect(activated).toMatchObject({ enabled: true, effectiveAt: Date.now(), items: next.items });
+  expect(activated.id).not.toBe(next.id);
+  expect(await admin.admin.sevenPick.overview()).toMatchObject({
+    active: { id: activated.id, enabled: true },
+    latest: { id: activated.id },
+    upcoming: null,
+    runtime: { paused: true },
+    rounds: expect.arrayContaining([expect.objectContaining({ id: manual.id, configVersionId: saved.id })]),
+  });
+  await expect(admin.admin.sevenPick.activateRule(activate)).rejects.toMatchObject({ code: "CONFLICT" });
+  const pagination = await admin.admin.sevenPick.ruleVersions({ beforeId: activated.id! });
+  expect(pagination.items.map(item => item.id)).toEqual([next.id, saved.id]);
+  expect(pagination.items[0]).toMatchObject({ id: next.id, canceledAt: activated.effectiveAt });
+  expect(pagination.nextBeforeId).toBeNull();
+  expect(db.$client.prepare("SELECT detail FROM admin_logs WHERE action='seven_pick_rule_activated'").pluck().all().map(detail => JSON.parse(detail as string))).toEqual([
+    { adminSessionId: adminRow.id, sourceVersionId: next.id, previousVersionId: saved.id, versionId: activated.id, effectiveAt: activated.effectiveAt },
+  ]);
+  vi.setSystemTime(next.effectiveAt);
+  expect(await admin.admin.sevenPick.overview()).toMatchObject({ active: { id: activated.id, enabled: true }, upcoming: null });
+  const rescheduled = await admin.admin.sevenPick.save({ expectedVersionId: activated.id, config: { ...input.config, enabled: false } });
+  expect(await admin.admin.sevenPick.overview()).toMatchObject({ active: { id: activated.id }, upcoming: { id: rescheduled.id } });
+  vi.setSystemTime(rescheduled.effectiveAt);
+  expect((await guest.sevenPick.overview()).configured).toBe(false);
 });

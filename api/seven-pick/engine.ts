@@ -12,6 +12,7 @@ import {
   SEVEN_PICK_MIN_STAKE_UNITS,
   SEVEN_PICK_NAME,
   SEVEN_PICK_SIZE,
+  type SevenPickConfig,
   type SevenPickItem,
 } from "./config";
 import { QUICKNET, quicknetRoundAtOrAfter, quicknetRoundTimeMs } from "./drand";
@@ -34,6 +35,7 @@ export class SevenPickError extends Error {
   readonly code:
     | "BETTING_DISABLED"
     | "INVALID_INPUT"
+    | "CONFLICT"
     | "ROUND_NOT_FOUND"
     | "ROUND_CLOSED"
     | "IDEMPOTENCY_CONFLICT"
@@ -162,6 +164,11 @@ export function getSevenPickRound(
   })();
 }
 
+// Keep rejected manual attempts in round history, but do not let them take
+// over the public overview's current, next, or most recent round slot.
+const PUBLIC_SNAPSHOT_FILTER =
+  "(status<>'risk_skipped' OR NOT EXISTS (SELECT 1 FROM seven_pick_manual_rounds m WHERE m.round_id=seven_pick_rounds.id))";
+
 export function getSevenPickSnapshot(
   db: Database.Database,
   nowMs = Date.now()
@@ -170,22 +177,35 @@ export function getSevenPickSnapshot(
     const active = db
       .prepare<[number, number], RoundRow>(
         SELECT_ROUND +
-          " WHERE opens_at<=? AND closes_at>? ORDER BY opens_at DESC LIMIT 1"
+          " WHERE opens_at<=? AND closes_at>? AND " +
+          PUBLIC_SNAPSHOT_FILTER +
+          " ORDER BY opens_at DESC LIMIT 1"
       )
       .get(nowMs, nowMs);
     const next =
       active ??
       db
         .prepare<[number], RoundRow>(
-          SELECT_ROUND + " WHERE opens_at>? ORDER BY opens_at LIMIT 1"
+          SELECT_ROUND +
+            " WHERE opens_at>? AND " +
+            PUBLIC_SNAPSHOT_FILTER +
+            " ORDER BY opens_at LIMIT 1"
         )
         .get(nowMs);
     const row =
       next ??
       db
-        .prepare<[], RoundRow>(SELECT_ROUND + " ORDER BY opens_at DESC LIMIT 1")
+        .prepare<[], RoundRow>(
+          SELECT_ROUND +
+            " WHERE " +
+            PUBLIC_SNAPSHOT_FILTER +
+            " ORDER BY opens_at DESC LIMIT 1"
+        )
         .get();
-    return { round: row ? roundView(db, row) : null, paused: getSevenPickRuntime(db).paused };
+    return {
+      round: row ? roundView(db, row) : null,
+      paused: getSevenPickRuntime(db).paused,
+    };
   })();
   return {
     name: SEVEN_PICK_NAME,
@@ -198,6 +218,55 @@ export function getSevenPickSnapshot(
       nowMs < round.closesAt,
     round,
   };
+}
+type PersistedSevenPickConfig = SevenPickConfig & { id: number };
+
+function insertSevenPickRoundSnapshot(
+  db: Database.Database,
+  config: PersistedSevenPickConfig,
+  opensAt: number,
+  nowMs: number
+): number {
+  const closesAt = opensAt + config.closeAfterMinutes * MINUTE_MS;
+  const drawAt = opensAt + config.drawAfterMinutes * MINUTE_MS;
+  const quicknetRound = quicknetRoundAtOrAfter(drawAt);
+  const result = db
+    .prepare(
+      "INSERT INTO seven_pick_rounds (config_version_id,status,enabled,opens_at,closes_at,draw_at,quicknet_round," +
+        "quicknet_scheduled_at,quicknet_network,quicknet_chain_hash,quicknet_public_key,quicknet_scheme,algorithm_version," +
+        "min_stake_units,max_stake_units,multipliers_json,created_at) VALUES (?, 'scheduled', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .run(
+      config.id,
+      opensAt,
+      closesAt,
+      drawAt,
+      quicknetRound,
+      quicknetRoundTimeMs(quicknetRound),
+      QUICKNET.network,
+      QUICKNET.chainHash,
+      QUICKNET.publicKey,
+      QUICKNET.scheme,
+      DRAW_ALGORITHM_VERSION,
+      config.minStakeUnits,
+      config.maxStakeUnits,
+      JSON.stringify(config.multipliers),
+      nowMs
+    );
+  const roundId = Number(result.lastInsertRowid);
+  const itemInsert = db.prepare(
+    "INSERT INTO seven_pick_round_items(round_id,item_id,name,description,position,image_url) VALUES (?,?,?,?,?,?)"
+  );
+  for (const item of config.items)
+    itemInsert.run(
+      roundId,
+      item.id,
+      item.name,
+      item.description,
+      item.position,
+      item.imageUrl
+    );
+  return roundId;
 }
 
 export function createSevenPickRound(
@@ -225,51 +294,145 @@ export function createSevenPickRound(
           "BETTING_DISABLED",
           "此时间没有启用的七星寻宝场次"
         );
+      // Activation can change the schedule, but existing betting windows are locked.
       const closesAt = opensAt + config.closeAfterMinutes * MINUTE_MS;
-      const drawAt = opensAt + config.drawAfterMinutes * MINUTE_MS;
-      const quicknetRound = quicknetRoundAtOrAfter(drawAt);
-      const result = db
-        .prepare(
-          "INSERT INTO seven_pick_rounds (config_version_id,status,enabled,opens_at,closes_at,draw_at,quicknet_round," +
-            "quicknet_scheduled_at,quicknet_network,quicknet_chain_hash,quicknet_public_key,quicknet_scheme,algorithm_version," +
-            "min_stake_units,max_stake_units,multipliers_json,created_at) VALUES (?, 'scheduled', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      const overlap = db
+        .prepare<[number, number], number>(
+          "SELECT 1 FROM seven_pick_rounds WHERE closes_at>? AND opens_at<? " +
+            "AND status IN ('scheduled','open') LIMIT 1"
         )
-        .run(
-          config.id,
-          opensAt,
-          closesAt,
-          drawAt,
-          quicknetRound,
-          quicknetRoundTimeMs(quicknetRound),
-          QUICKNET.network,
-          QUICKNET.chainHash,
-          QUICKNET.publicKey,
-          QUICKNET.scheme,
-          DRAW_ALGORITHM_VERSION,
-          config.minStakeUnits,
-          config.maxStakeUnits,
-          JSON.stringify(config.multipliers),
-          nowMs
-        );
-      const roundId = Number(result.lastInsertRowid);
-      const itemInsert = db.prepare(
-        "INSERT INTO seven_pick_round_items(round_id,item_id,name,description,position,image_url) VALUES (?,?,?,?,?,?)"
+        .pluck()
+        .get(opensAt, closesAt);
+      if (overlap)
+        throw new SevenPickError("CONFLICT", "已有场次的投注时段与本次定时场次重叠");
+      const roundId = insertSevenPickRoundSnapshot(
+        db,
+        { ...config, id: config.id },
+        opensAt,
+        nowMs
       );
-      for (const item of config.items)
-        itemInsert.run(
-          roundId,
-          item.id,
-          item.name,
-          item.description,
-          item.position,
-          item.imageUrl
-        );
       return roundView(
         db,
         db
           .prepare<[number], RoundRow>(SELECT_ROUND + " WHERE id=?")
           .get(roundId)!
       );
+    })
+    .immediate();
+}
+
+const DAY_MS = 24 * 60 * MINUTE_MS;
+type ManualStartCheck =
+  | { config: PersistedSevenPickConfig; block: null }
+  | { block: { code: SevenPickError["code"]; message: string } };
+
+function checkManualStart(
+  db: Database.Database,
+  nowMs: number,
+  expectedVersionId?: number
+): ManualStartCheck {
+  const fail = (
+    code: SevenPickError["code"],
+    message: string
+  ): ManualStartCheck => ({ block: { code, message } });
+  let dayStart: number;
+  try {
+    dayStart = beijingDayStart(nowMs);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    return fail("INVALID_INPUT", "无效开盘时间");
+  }
+  if (nowMs < QUICKNET.genesisTimeMs)
+    return fail("INVALID_INPUT", "无效开盘时间");
+  if (getSevenPickRuntime(db).paused)
+    return fail("BETTING_DISABLED", "七星寻宝已暂停，暂不能手动开盘");
+  const config = getSevenPickConfig(db, nowMs);
+  if (!config.enabled || config.id === null)
+    return fail("BETTING_DISABLED", "当前生效配置未启用七星寻宝");
+  if (expectedVersionId !== undefined && config.id !== expectedVersionId)
+    return fail("CONFLICT", "当前生效配置已变更，请刷新后再开启");
+
+  const closesAt = nowMs + config.closeAfterMinutes * MINUTE_MS;
+  // Existing scheduled windows are immutable even if their config has since
+  // changed. Only manual attempts that could still take bets reserve a window.
+  const overlap = db
+    .prepare<[number, number], number>(
+      "SELECT 1 FROM seven_pick_rounds r WHERE r.closes_at>? AND r.opens_at<? AND (" +
+        "r.status IN ('scheduled','open') OR NOT EXISTS (SELECT 1 FROM seven_pick_manual_rounds m WHERE m.round_id=r.id)) LIMIT 1"
+    )
+    .pluck()
+    .get(nowMs, closesAt);
+  if (overlap) return fail("CONFLICT", "已有场次的投注时段与本次手动开盘重叠");
+  if (
+    db
+      .prepare<[number], number>(
+        "SELECT 1 FROM seven_pick_rounds WHERE opens_at=?"
+      )
+      .pluck()
+      .get(nowMs)
+  )
+    return fail("CONFLICT", "该开盘时间已记录场次，请勿重复开启");
+
+  // Compare betting windows [open, close), not draw/settlement windows, just as
+  // config validation does. Maintenance only creates rounds one minute ahead,
+  // so also check configured slots without snapshots, including the next version.
+  const overlapsConfigured = (day: number, scheduled: SevenPickConfig) =>
+    scheduled.enabled &&
+    scheduled.openMinutes.some(minute => {
+      const opensAt = day + minute * MINUTE_MS;
+      return (
+        opensAt < closesAt &&
+        nowMs < opensAt + scheduled.closeAfterMinutes * MINUTE_MS
+      );
+    });
+  const nextDay = dayStart + DAY_MS;
+  if (
+    overlapsConfigured(dayStart, config) ||
+    (closesAt > nextDay &&
+      overlapsConfigured(nextDay, getSevenPickConfig(db, nextDay)))
+  )
+    return fail("CONFLICT", "本次手动开盘将与配置中的定时场次投注时段重叠");
+  // A config saved after this start can still change tomorrow's schedule. End
+  // betting by midnight to protect new versions without changing config saves
+  // or schedule generation. Draw and settlement may follow after midnight.
+  if (closesAt > nextDay)
+    return fail("CONFLICT", "手动场次的投注时段不能跨越北京时间午夜");
+  return { config: { ...config, id: config.id }, block: null };
+}
+
+/** Returns the current non-risk blocker, if any. Risk is evaluated at activation. */
+export function getSevenPickManualStartBlock(
+  db: Database.Database,
+  nowMs = Date.now()
+): string | null {
+  return db.transaction(
+    () => checkManualStart(db, nowMs).block?.message ?? null
+  )();
+}
+
+/** Create and activate an immutable round now, persisting both open and risk_skipped results. */
+export function startManualSevenPickRound(
+  db: Database.Database,
+  expectedVersionId: number,
+  nowMs = Date.now()
+): SevenPickRound {
+  if (!Number.isSafeInteger(expectedVersionId) || expectedVersionId <= 0)
+    throw new SevenPickError("INVALID_INPUT", "无效配置版本");
+  return db
+    .transaction(() => {
+      const check = checkManualStart(db, nowMs, expectedVersionId);
+      if (check.block)
+        throw new SevenPickError(check.block.code, check.block.message);
+      const roundId = insertSevenPickRoundSnapshot(
+        db,
+        check.config,
+        nowMs,
+        nowMs
+      );
+      db.prepare(
+        "INSERT INTO seven_pick_manual_rounds(round_id) VALUES(?)"
+      ).run(roundId);
+      return openSevenPickRound(db, roundId, nowMs);
     })
     .immediate();
 }
@@ -474,7 +637,10 @@ export function listSevenPickOrders(
 
 function assertSevenPickNotPaused(db: Database.Database) {
   if (getSevenPickRuntime(db).paused)
-    throw new SevenPickError("BETTING_DISABLED", "七星寻宝已暂停，暂不接受新投注");
+    throw new SevenPickError(
+      "BETTING_DISABLED",
+      "七星寻宝已暂停，暂不接受新投注"
+    );
 }
 
 export function placeSevenPickOrder(

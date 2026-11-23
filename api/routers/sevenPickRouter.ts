@@ -5,7 +5,9 @@ import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { readControlState, readUserPolicy } from "../queries/policies";
 import {
+  activateSevenPickConfig,
   getLatestSevenPickConfig,
+  getNextSevenPickConfig,
   getSevenPickConfig,
   listSevenPickConfigVersions,
   saveSevenPickConfig,
@@ -14,6 +16,7 @@ import {
 import {
   getSevenPickRound, getSevenPickSnapshot, listSevenPickOrders,
   placeSevenPickOrder, SevenPickError, sevenPickPlaceInput,
+  getSevenPickManualStartBlock, startManualSevenPickRound,
 } from "../seven-pick/engine";
 import { approveSevenPickRefund, getSevenPickLifecycle, listSevenPickAudit, SevenPickLifecycleError } from "../seven-pick/lifecycle";
 import { getSevenPickRuntime, setSevenPickRuntime } from "../seven-pick/release";
@@ -22,6 +25,12 @@ import { getSevenPickSealTimestampTime } from "../seven-pick/seal-timestamp";
 
 type Db = ReturnType<typeof getDb>["$client"];
 const roundIdInput = z.object({ roundId: z.number().int().positive() });
+const versionId = z.number().int().positive();
+const maintenanceRuleBlock = "系统正在维护，暂时无法立即启用规则";
+
+function ruleSummary({ id, effectiveAt, createdAt, canceledAt, enabled, openMinutes, closeAfterMinutes, drawAfterMinutes, minStakeUnits, maxStakeUnits }: ReturnType<typeof getSevenPickConfig>) {
+  return { id: id!, effectiveAt, createdAt, canceledAt, enabled, openMinutes, closeAfterMinutes, drawAfterMinutes, minStakeUnits, maxStakeUnits };
+}
 
 function recentRounds(db: Db, beforeOpensAt = Date.now() + 1) {
   return db.prepare(
@@ -112,20 +121,84 @@ export const sevenPickRouter = createRouter({
 
 export const sevenPickAdminRouter = createRouter({
   overview: adminQuery.query(() => {
-    const db = getDb().$client;
+    const connection = getDb();
+    const db = connection.$client;
+    const now = Date.now();
     const runtime = getSevenPickRuntime(db);
+    const maintenance = readControlState(connection).maintenance;
     return {
       launchReady: !runtime.paused,
       runtime,
-      active: getSevenPickConfig(db),
+      active: getSevenPickConfig(db, now),
+      upcoming: getNextSevenPickConfig(db, now),
+      activationBlocked: maintenance ? maintenanceRuleBlock : null,
+      manualStartBlock: maintenance
+        ? "系统正在维护，暂时无法开启新场次"
+        : getSevenPickManualStartBlock(db, now),
       latest: getLatestSevenPickConfig(db),
-      versions: listSevenPickConfigVersions(db, 10).map(({ id, effectiveAt, createdAt, enabled }) => ({ id, effectiveAt, createdAt, enabled })),
+      versions: listSevenPickConfigVersions(db, 10).map(ruleSummary),
       rounds: db.prepare<[], number>(
         "SELECT id FROM seven_pick_rounds WHERE status IN ('review','refunding','ots_waiting','sealed') " +
         "UNION SELECT id FROM (SELECT id FROM seven_pick_rounds ORDER BY id DESC LIMIT 30) ORDER BY id DESC"
       ).pluck().all().map((id) => getSevenPickRound(db, id)).filter((round) => round !== null),
     };
   }),
+  ruleVersions: adminQuery.input(z.strictObject({ beforeId: versionId.optional() }).optional()).query(({ input }) => {
+    const size = 10;
+    const rows = listSevenPickConfigVersions(getDb().$client, size + 1, input?.beforeId);
+    const items = rows.slice(0, size).map(ruleSummary);
+    return { items, nextBeforeId: rows.length > size ? items.at(-1)!.id : null };
+  }),
+  activateRule: adminQuery.input(z.strictObject({
+    versionId,
+    expectedActiveVersionId: versionId.nullable(),
+    expectedVersionId: versionId.nullable(),
+  })).mutation(({ ctx, input }) => {
+    const connection = getDb();
+    const db = connection.$client;
+    return db.transaction(() => {
+      if (readControlState(connection).maintenance)
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: maintenanceRuleBlock });
+      const now = Date.now();
+      const current = getSevenPickConfig(db, now);
+      if (current.id !== input.expectedActiveVersionId || getLatestSevenPickConfig(db).id !== input.expectedVersionId)
+        throw new TRPCError({ code: "CONFLICT", message: "规则已变更，请刷新后重新确认" });
+      if (current.id === input.versionId && current.enabled)
+        throw new TRPCError({ code: "CONFLICT", message: "此规则已在生效" });
+      const activated = activateSevenPickConfig(db, input.versionId, now);
+      if (!activated) throw new TRPCError({ code: "NOT_FOUND", message: "规则版本不存在" });
+      db.prepare("INSERT INTO admin_logs (action, detail) VALUES (?, ?)").run(
+        "seven_pick_rule_activated",
+        JSON.stringify({ adminSessionId: ctx.adminSessionId, sourceVersionId: input.versionId, previousVersionId: current.id, versionId: activated.id, effectiveAt: activated.effectiveAt })
+      );
+      return activated;
+    }).immediate();
+  }),
+  startManualRound: adminQuery.input(z.strictObject({ expectedVersionId: z.number().int().positive() }))
+    .mutation(({ ctx, input }) => {
+      const connection = getDb();
+      const db = connection.$client;
+      try {
+        return db.transaction(() => {
+          if (readControlState(connection).maintenance) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "系统正在维护，暂时无法开启新场次" });
+          }
+          const now = Date.now();
+          const round = startManualSevenPickRound(db, input.expectedVersionId, now);
+          db.prepare("INSERT INTO admin_logs (action, detail) VALUES (?, ?)").run(
+            "seven_pick_manual_round_started",
+            JSON.stringify({ adminSessionId: ctx.adminSessionId, roundId: round.id, versionId: round.configVersionId, status: round.status, opensAt: round.opensAt })
+          );
+          return round;
+        }).immediate();
+      } catch (error) {
+        if (error instanceof SevenPickError) {
+          const code = error.code === "CONFLICT" ? "CONFLICT" : error.code === "INVALID_INPUT" ? "BAD_REQUEST" : "PRECONDITION_FAILED";
+          throw new TRPCError({ code, message: error.message });
+        }
+        throw error;
+      }
+    }),
   setRuntime: adminQuery.input(z.strictObject({
     key: z.enum(["paused", "rfc3161Enabled"]),
     value: z.boolean(),

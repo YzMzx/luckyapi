@@ -1109,12 +1109,12 @@ export function getDb() {
       sqlite.pragma("journal_mode = WAL");
       sqlite.pragma("busy_timeout = 5000");
       sqlite.exec(DDL);
+      ensureSevenPickSchema(sqlite);
       sqlite.transaction(() => {
         sqlite.exec(PERP_ENGINE_SCHEMA);
         sqlite.exec(PERP_MARKET_SCHEMA);
         sqlite.exec(PERP_WEEKLY_SCHEMA);
         migratePerpMarginEvents(sqlite);
-        ensureSevenPickSchema(sqlite);
         ensureSevenPickLifecycleSchema(sqlite);
         ensureSevenPickTimestampSchema(sqlite);
       }).immediate();
