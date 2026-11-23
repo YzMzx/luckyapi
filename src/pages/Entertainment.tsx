@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { Gift, Cherry, CalendarCheck, Swords, ChartCandlestick, ArrowRight, Loader2 } from "lucide-react";
+import { Gift, Cherry, CalendarCheck, Swords, ChartCandlestick, Gem, ArrowRight, Loader2 } from "lucide-react";
 import { useMe } from "@/hooks/useMe";
 import { SiteNav } from "@/components/SiteNav";
 import { trpc } from "@/providers/trpc";
@@ -47,6 +47,13 @@ export default function Entertainment() {
         : s.signin.canSignin
           ? { text: "可签到", cls: "border-[#00B77D]/50 bg-[#00B77D]/10 text-[#00B77D]" }
           : { text: s.signin.unavailableReason === "budget_exhausted" ? "预算暂时耗尽" : "暂未开放", cls: "border-border bg-white/5 text-muted-foreground" },
+    },
+    {
+      to: "/entertainment/seven-pick",
+      icon: Gem,
+      title: "七星寻宝",
+      desc: "32 件宝物选 7 件 · 使用模拟合约钱包 · 暂可试玩选号",
+      status: { text: "预览", cls: "border-border bg-white/5 text-muted-foreground" },
     },
     {
       to: "/contracts",

@@ -29,6 +29,11 @@ import {
   type PerpDepthFill,
   type PerpOrderBook,
 } from "./depth";
+import {
+  changePerpCash,
+  PerpCashRangeError,
+  readPerpCash as cash,
+} from "./wallet";
 export type { PerpOrderBook, PerpOrderBookLevel } from "./depth";
 
 export class PerpRuleError extends Error {}
@@ -159,19 +164,13 @@ function charge(n: number) {
 function sign(p: Side) {
   return p === "long" ? 1 : -1;
 }
-function cash(db: Db, id: number) {
-  return Number(
-    db
-      .prepare("SELECT cash_units FROM perp_wallets WHERE user_id=?")
-      .pluck()
-      .get(id) ?? 0
-  );
-}
 function changeCash(db: Db, id: number, delta: number) {
-  const total = integer(cash(db, id) + delta);
-  db.prepare(
-    "INSERT INTO perp_wallets VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET cash_units=excluded.cash_units"
-  ).run(id, total);
+  try {
+    changePerpCash(db, id, delta);
+  } catch (error) {
+    if (error instanceof PerpCashRangeError) fail(error.message);
+    throw error;
+  }
 }
 function addEvent(
   db: Db,

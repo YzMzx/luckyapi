@@ -9,6 +9,7 @@ import { financeRouter } from "./routers/financeRouter";
 import { rankingsRouter } from "./routers/rankingsRouter";
 import { perpRouter } from "./routers/perpRouter";
 import { levelsRouter } from "./routers/levelsRouter";
+import { sevenPickRouter } from "./routers/sevenPickRouter";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -18,6 +19,7 @@ export const appRouter = createRouter({
   levels: levelsRouter,
   duel: duelRouter,
   entertainment: entertainmentRouter,
+  sevenPick: sevenPickRouter,
   finance: financeRouter,
   perps: perpRouter,
   rankings: rankingsRouter,

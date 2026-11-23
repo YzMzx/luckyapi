@@ -51,11 +51,23 @@ type Account = {
   cash: bigint;
   inFlow: bigint;
   outFlow: bigint;
+  gameFlow: bigint;
   closing: bigint;
   pnl: bigint;
   rank: number | null;
   positions: Map<string, Position>;
 };
+
+function hasSevenPickLedger(db: Db) {
+  // Perp-only databases and tools built before the game schema still replay normally.
+  return Boolean(
+    db
+      .prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='seven_pick_ledger'"
+      )
+      .get()
+  );
+}
 
 function replay(db: Db, start: number) {
   const accounts = new Map<number, Account>();
@@ -67,6 +79,7 @@ function replay(db: Db, start: number) {
         cash: 0n,
         inFlow: 0n,
         outFlow: 0n,
+        gameFlow: 0n,
         closing: 0n,
         pnl: 0n,
         rank: null,
@@ -117,14 +130,26 @@ function replay(db: Db, start: number) {
     margin_delta_units: number;
     cash_delta_units: number;
   };
+  // IDs are source-local. Resolve timestamp ties by source then ID; the game
+  // side only changes cash and must never affect the position replay.
+  let events = `SELECT user_id,symbol,kind,qty_delta_atoms,entry_delta_units,margin_delta_units,cash_delta_units,
+    created_at,0 AS source,id FROM perp_events WHERE created_at>=@start AND created_at<@end`;
+  if (hasSevenPickLedger(db)) {
+    events += ` UNION ALL SELECT user_id,NULL,'game',0,0,0,delta_units,created_at,1,id
+      FROM seven_pick_ledger WHERE created_at>=@start AND created_at<@end`;
+  }
   for (const r of db
-    .prepare<[number, number], Event>(
-      "SELECT user_id,symbol,kind,qty_delta_atoms,entry_delta_units,margin_delta_units,cash_delta_units FROM perp_events WHERE created_at>=? AND created_at<? ORDER BY created_at,id"
+    .prepare<[{ start: number; end: number }], Event>(
+      events + " ORDER BY created_at,source,id"
     )
-    .iterate(start, start + WEEK)) {
+    .iterate({ start, end: start + WEEK })) {
     const a = account(r.user_id);
     const change = BigInt(r.cash_delta_units);
     a.cash += change;
+    if (r.kind === "game") {
+      a.gameFlow += change;
+      continue;
+    }
     if (r.kind === "in") a.inFlow += change;
     if (r.kind === "out") a.outFlow -= change;
     if (!r.symbol) continue;
@@ -196,7 +221,7 @@ function publish(db: Db, start: number, now: number) {
       const value = p.margin + (p.quantity * mark) / SCALE - p.basis;
       if (value > 0n) a.closing += value; // loss is limited to the isolated position
     }
-    a.pnl = a.closing - a.opening - a.inFlow + a.outFlow;
+    a.pnl = a.closing - a.opening - a.inFlow + a.outFlow - a.gameFlow;
   }
   if (neededSymbols.size)
     return { reason: "等待周界标记价格", neededSymbols: [...neededSymbols] };
@@ -257,9 +282,17 @@ export function settlePerpWeeks(db: Db, now = Date.now()) {
       .prepare("SELECT min(created_at) FROM perp_events")
       .pluck()
       .get() as number | null;
+    const firstGame = hasSevenPickLedger(db)
+      ? db
+          .prepare<[], number | null>(
+            "SELECT min(created_at) FROM seven_pick_ledger"
+          )
+          .pluck()
+          .get()
+      : null;
     db.prepare(
       "INSERT OR IGNORE INTO perp_week_cursor(id,next_week) VALUES(1,?)"
-    ).run(perpWeekStart(Math.min(first ?? now, now)));
+    ).run(perpWeekStart(Math.min(first ?? now, firstGame ?? now, now)));
   }
   const lastDue = perpWeekStart(now - GRACE) - WEEK;
   while (state.published < 4 && readCursor(db)!.next_week <= lastDue) {

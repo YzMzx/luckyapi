@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { listPerpPositions } from "./adminPerpPositions";
 import { perpSettingsAdminRouter } from "./adminPerpSettings";
+import { sevenPickAdminRouter } from "./sevenPickRouter";
 import { randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { eq, desc, sql, and, or, isNotNull, isNull, inArray, lt, lte, gt, gte, like } from "drizzle-orm";
@@ -205,6 +206,7 @@ export const adminRouter = createRouter({
   authSettings: authSettingsAdminRouter,
   financeSettings: financeSettingsAdminRouter,
   perpSettings: perpSettingsAdminRouter,
+  sevenPick: sevenPickAdminRouter,
   listPerpPositions,
   monitoring: monitoringAdminRouter,
   userDetail: userDetailProcedure,

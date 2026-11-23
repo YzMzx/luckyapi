@@ -16,6 +16,9 @@ import {
 } from "./engine";
 import { getDb } from "../queries/connection";
 import { withTestDepth } from "./depth-fixture";
+import { applySevenPickCash } from "../seven-pick/wallet";
+import { seedGameBet, seedGameRound } from "./wallet-fixture";
+import { getPerpWeeklyBoard, perpWeekStart, settlePerpWeeks } from "./weekly";
 let db: Database.Database;
 const symbol = "BTCUSDT",
   qty = 100_000_000,
@@ -294,6 +297,42 @@ it("separates site-credit XP basis from simulated weekly cash flows across a rat
       .all()
   ).toEqual([2_000_000, -2_000_000, -150_004]);
   expect(getPerpAccount(db, 1).permanentCreditUnits).toBe(10_096_671);
+});
+it("redeems a 七星寻宝 payout through the existing permanent-credit exchange without ranking it as perp PnL", () => {
+  seedGameRound(db, start);
+  convert(1, "in", 1000);
+  seedGameBet(db, 1, 1, 1000, start);
+  const base = { roundId: 1, userId: 1, betId: 1, now: start };
+  const payout = { ...base, kind: "payout" as const, deltaUnits: 50_000_000 };
+  db.transaction(() => {
+    applySevenPickCash(db, { ...base, kind: "stake", deltaUnits: -1000 });
+    expect(applySevenPickCash(db, payout)).toEqual({
+      applied: true,
+      cashUnits: 50_000_000,
+    });
+  }).immediate();
+  expect(getPerpAccount(db, 1).availableCashUnits).toBe(50_000_000);
+  expect(convert(1, "out", 50_000_000)).toMatchObject({
+    feeUnits: 2_500_000,
+    netUnits: 47_500_000,
+  });
+  expect(
+    db.transaction(() => applySevenPickCash(db, payout)).immediate()
+  ).toEqual({ applied: false, cashUnits: 0 });
+  expect(getPerpAccount(db, 1)).toMatchObject({
+    cashUnits: 0,
+    permanentCreditUnits: 57_499_000,
+  });
+  expect(
+    db.prepare("SELECT kind FROM perp_events ORDER BY id").pluck().all()
+  ).toEqual(["in", "out"]);
+  const weekStart = perpWeekStart(start);
+  expect(
+    settlePerpWeeks(db, weekStart + 7 * 86_400_000 + 300_000).published
+  ).toBe(1);
+  expect(
+    getPerpWeeklyBoard(db, { weekStart, userId: 1, side: "profit" })?.mine
+  ).toMatchObject({ pnlUnits: 0, rank: null });
 });
 it("awards income XP only on net redemptions above outstanding principal", async () => {
   convert(1, "in", 1_000_000);

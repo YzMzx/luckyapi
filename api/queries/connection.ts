@@ -10,6 +10,7 @@ import {
 } from "../perp/schema";
 import { PERP_MARKET_SCHEMA } from "../perp/market";
 import { PERP_WEEKLY_SCHEMA } from "../perp/weekly";
+import { ensureSevenPickSchema } from "../seven-pick/schema";
 import { LEVEL_SCHEMA, migrateLevelColumns } from "./level-schema";
 import { creditDollarsToUnits, creditUnitsToDollars, reverseUserBalanceDebit } from "./credit-grants";
 import { recordTx } from "./ledger";
@@ -1111,6 +1112,7 @@ export function getDb() {
         sqlite.exec(PERP_MARKET_SCHEMA);
         sqlite.exec(PERP_WEEKLY_SCHEMA);
         migratePerpMarginEvents(sqlite);
+        ensureSevenPickSchema(sqlite);
       }).immediate();
       migratePerpLeverage(sqlite);
       migrate(sqlite);

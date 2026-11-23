@@ -6,6 +6,7 @@ import Announcement from './pages/Announcement'
 import Onboarding from './pages/Onboarding'
 import Draw from './pages/Draw'
 import Entertainment from './pages/Entertainment'
+import SevenPick from './pages/SevenPick'
 import Perps from './pages/perp/Perps'
 import PerpLiveBoard from './pages/perp/PerpLiveBoard'
 import PerpSquare from './pages/perp/PerpSquare'
@@ -42,6 +43,7 @@ import AdminPerpSettings from './pages/admin/PerpSettings'
 import AdminPerpPositions from './pages/admin/PerpPositions'
 import AdminMonitoring from './pages/admin/Monitoring'
 import AdminEntOverview from './pages/admin/ent/Overview'
+import AdminSevenPick from './pages/admin/ent/SevenPick'
 import AdminEntDraw from './pages/admin/ent/Draw'
 import AdminEntSlot from './pages/admin/ent/Slot'
 import AdminEntSignin from './pages/admin/ent/Signin'
@@ -85,6 +87,7 @@ export default function App() {
         <Route path="/announcements/:id" element={<Announcement />} />
         <Route path="/draw" element={<Draw />} />
         <Route path="/entertainment" element={<Entertainment />} />
+        <Route path="/entertainment/seven-pick" element={<SevenPick />} />
         <Route path="/contracts" element={<Perps />} />
         <Route path="/contracts/square" element={<PerpSquare />} />
         <Route path="/contracts/live" element={<PerpLiveBoard />} />
@@ -124,6 +127,7 @@ export default function App() {
           <Route path="invites" element={<AdminInvites />} />
           <Route path="draws" element={<Navigate to="/admin/entertainment/draw" replace />} />
           <Route path="entertainment" element={<AdminEntOverview />} />
+          <Route path="entertainment/seven-pick" element={<AdminSevenPick />} />
           <Route path="entertainment/draw" element={<AdminEntDraw />} />
           <Route path="entertainment/slot" element={<AdminEntSlot />} />
           <Route path="entertainment/signin" element={<AdminEntSignin />} />
