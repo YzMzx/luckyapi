@@ -14,6 +14,13 @@ import {
   type PerpSnapshot,
 } from "./engine";
 
+import {
+  DEFAULT_PERP_SLIPPAGE_BPS,
+  isFreshPerpOrderBook,
+  observePerpDepth,
+  validPerpSlippageBps,
+} from "./depth";
+
 type Db = Database.Database;
 export type PendingInput = PerpOrderInput & {
   orderType: "limit" | "conditional";
@@ -73,6 +80,8 @@ function valid(i: PendingInput) {
       : !isValidPerpLeverage(i.leverage ?? 1)
   )
     fail("杠杆参数无效");
+  if (i.slippageBps !== undefined && !validPerpSlippageBps(i.slippageBps))
+    fail("滑点上限须为 1 至 1000 bps");
   if (i.orderType === "limit") {
     if (
       !positive(i.limitPriceUnits) ||
@@ -97,7 +106,15 @@ export function replayPending(db: Db, user: number, input: PendingInput) {
     )
     .get(user, input.requestKey) as PendingReceipt | undefined;
   if (found) {
+    const slip = db
+      .prepare<[number], number>(
+        "SELECT slippage_bps FROM perp_pending_slippage WHERE pending_id=?"
+      )
+      .pluck()
+      .get(found.id);
     if (
+      (slip ?? DEFAULT_PERP_SLIPPAGE_BPS) !==
+        (input.slippageBps ?? DEFAULT_PERP_SLIPPAGE_BPS) ||
       found.symbol !== input.symbol ||
       found.action !== input.action ||
       found.orderType !== input.orderType ||
@@ -113,9 +130,11 @@ export function replayPending(db: Db, user: number, input: PendingInput) {
   if (
     db
       .prepare(
-        "SELECT 1 FROM perp_orders WHERE user_id=? AND request_key=? UNION ALL SELECT 1 FROM perp_exchanges WHERE user_id=? AND request_key=? LIMIT 1"
+        `SELECT 1 FROM perp_orders WHERE user_id=@user AND request_key=@key
+         UNION ALL SELECT 1 FROM perp_exchanges WHERE user_id=@user AND request_key=@key
+         UNION ALL SELECT 1 FROM perp_margin_additions WHERE user_id=@user AND request_key=@key LIMIT 1`
       )
-      .get(user, input.requestKey, user, input.requestKey)
+      .get({ user, key: input.requestKey })
   )
     fail("请求键已用于其他业务");
 }
@@ -157,6 +176,11 @@ export function createPending(
       if (prior) return prior;
       if (!usable(snapshot, input.symbol))
         return fail("暂无可用于挂单的新鲜行情或合约规格");
+      if (
+        !isFreshPerpOrderBook(snapshot.orderBook, input.symbol) ||
+        !observePerpDepth(db, snapshot.orderBook)
+      )
+        fail("暂无可用于挂单的新鲜订单簿");
       checkLot(input, snapshot);
       const cfg = readPerpConfig(db),
         listed = cfg.symbols.find(s => s.symbol === input.symbol);
@@ -272,6 +296,13 @@ export function createPending(
           now,
           now
         );
+      if (
+        input.slippageBps !== undefined &&
+        input.slippageBps !== DEFAULT_PERP_SLIPPAGE_BPS
+      )
+        db.prepare(
+          "INSERT INTO perp_pending_slippage(pending_id,slippage_bps) VALUES(?,?)"
+        ).run(saved.lastInsertRowid, input.slippageBps);
       if (position && input.action === "close")
         db.prepare(
           "INSERT INTO perp_pending_position_bindings(pending_id,opened_at) VALUES (?,?)"
@@ -362,7 +393,8 @@ export function matchPending(
       if (
         !["pending", "triggered"].includes(r.status) ||
         !usable(q, r.symbol) ||
-        q.asOf <= r.lastQuoteAt
+        q.asOf <= r.createdAt ||
+        q.asOf < r.lastQuoteAt
       )
         return get(db, id);
       const reason = guard(r.userId);
@@ -394,6 +426,7 @@ export function matchPending(
         q.asOf,
         id
       );
+      let triggeredAt = r.triggeredAt;
       if (r.orderType === "conditional" && r.status === "pending") {
         if (
           r.triggerDirection === "above"
@@ -406,15 +439,29 @@ export function matchPending(
             table +
             " SET status='triggered',triggered_at=?,updated_at=? WHERE id=?"
         ).run(q.asOf, q.asOf, id);
+        triggeredAt = q.asOf;
       }
-      const buy =
-        r.action === "openLong" || (r.action === "close" && r.side === "short");
+      // A fresh mark can activate a condition even during an order-book outage.
+      // Never execute against a book from before the order/trigger, or after
+      // a funding boundary that the position has not yet settled.
+      const book = q.orderBook;
       if (
-        r.limitPriceUnits !== null &&
-        (buy ? q.askUnits > r.limitPriceUnits : q.bidUnits < r.limitPriceUnits)
+        !isFreshPerpOrderBook(book, r.symbol) ||
+        book.asOf <= r.createdAt ||
+        !observePerpDepth(db, book) ||
+        (triggeredAt !== null && book.asOf < triggeredAt) ||
+        (position && position.due <= book.asOf) ||
+        q.nextFundingAt <= book.asOf
       )
         return get(db, id);
+      const slippageBps = db
+        .prepare<[number], number>(
+          "SELECT slippage_bps FROM perp_pending_slippage WHERE pending_id=?"
+        )
+        .pluck()
+        .get(r.id);
       const input: PendingInput = {
+        slippageBps,
         action: r.action,
         symbol: r.symbol,
         quantityAtoms: r.quantityAtoms,
@@ -429,18 +476,26 @@ export function matchPending(
         // Savepoint ensures a business rejection cannot retain a partial debit/ledger entry.
         const applied = db.transaction(() => {
           checkLot(input, q);
-          return fillOrder(db, r.userId, input, q);
+          return fillOrder(
+            db,
+            r.userId,
+            input,
+            { ...q, orderBook: book },
+            { limitPriceUnits: input.limitPriceUnits }
+          );
         })();
-        const fill = applied.order ?? applied.liquidated;
+        if ("waiting" in applied) return get(db, id);
+        const order = "order" in applied;
+        const fill = "order" in applied ? applied.order : applied.liquidated;
         db.prepare(
           "UPDATE " +
             table +
             " SET status=?,updated_at=?,fill_order_id=?,reason=? WHERE id=?"
         ).run(
-          applied.order ? "filled" : "rejected",
-          q.asOf,
+          order ? "filled" : "rejected",
+          fill.createdAt,
           fill.id,
-          applied.order ? null : "仓位已强平",
+          order ? null : "仓位已强平",
           id
         );
       } catch (e) {

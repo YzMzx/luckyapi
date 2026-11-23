@@ -4,6 +4,7 @@ import {
   getBoundaryMark,
   getFundingHistory,
   getPerpInstrument,
+  getPerpOrderBook,
   getPerpQuote,
 } from "./market";
 import { listPendingSymbols, matchPending, pendingForSymbol } from "./pending";
@@ -80,12 +81,16 @@ async function maintainSymbol(
   // Settle funding and liquidation before discretionary orders at the same observed quote.
   const q = await getPerpQuote(db, symbol);
   if (!q || q.symbol !== symbol || !freshQuote(q)) return;
-  if (due !== undefined) liquidatePerpPositions(db, q);
+  const orderBook = await getPerpOrderBook(db, symbol);
+  if (!freshQuote(q)) return;
+  if (due !== undefined)
+    liquidatePerpPositions(db, { ...q, orderBook: orderBook ?? undefined });
   if (!hasOrders) return;
   const instrument = await getPerpInstrument(db, symbol);
   if (!instrument || instrument.symbol !== symbol || !freshQuote(q)) return;
   const snapshot = {
     ...q,
+    orderBook: orderBook ?? undefined,
     tickSizeUnits: instrument.tickSizeUnits,
     qtyStepAtoms: instrument.qtyStepUnits,
     minQtyAtoms: instrument.minQtyUnits,

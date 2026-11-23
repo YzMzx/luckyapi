@@ -6,6 +6,7 @@ import {
   getPerpInstrument,
   lookupPerpInstrument,
   getPerpMarket,
+  getPerpOrderBook,
   getPerpQuote,
   getPerpQuoteStatus,
   PERP_MARKET_SCHEMA,
@@ -386,6 +387,227 @@ it("only accepts snapshots strictly later than the order timestamp", async () =>
     asOf: now - 10,
   });
 });
+const bookRow = {
+  s: symbol,
+  ts: now - 10,
+  cts: now - 20,
+  u: 4321,
+  seq: 9876,
+  b: [["100000.2000", "0.12345678"]],
+  a: [["100000.301", "1.003000000"]],
+};
+const bookReply = (patch: object = {}, time = now, retCode = 0) =>
+  Response.json({ retCode, time, result: { ...bookRow, ...patch } });
+
+it("pulls up to 50 levels of public linear REST depth and coalesces by symbol", async () => {
+  const levels = (start: number, step: number) =>
+    Array.from({ length: 50 }, (_, i) => [String(start + i * step), "1"]);
+  const mock = feed(url => {
+    expect(url.pathname).toBe("/v5/market/orderbook");
+    expect(url.searchParams.get("limit")).toBe("50");
+    const s = url.searchParams.get("symbol");
+    expect([symbol, "ETHUSDT"]).toContain(s);
+    return bookReply({ s, b: levels(99, -1), a: levels(100, 1) });
+  });
+  const [a, b, other] = await Promise.all([
+    getPerpOrderBook(db, symbol),
+    getPerpOrderBook(db, symbol, now - hour),
+    getPerpOrderBook(db, "ETHUSDT"),
+  ]);
+  expect(mock).toHaveBeenCalledTimes(2);
+  expect(a).toEqual(b);
+  expect(a).not.toBe(b);
+  expect(other?.symbol).toBe("ETHUSDT");
+  expect(a).toMatchObject({ symbol, asOf: bookRow.cts, sequence: bookRow.seq });
+  expect(a?.bids).toHaveLength(50);
+  expect(a?.asks).toHaveLength(50);
+  expect(a?.bids[49]).toEqual({ priceUnits: 50000, quantityAtoms: 100000000 });
+  expect(a?.asks[49]).toEqual({ priceUnits: 149000, quantityAtoms: 100000000 });
+});
+
+it("converts price and quantity exactly, isolating each caller from the shared snapshot", async () => {
+  feed(() => bookReply());
+  const [a, b] = await Promise.all([
+    getPerpOrderBook(db, symbol),
+    getPerpOrderBook(db, symbol),
+  ]);
+  const expected = {
+    symbol,
+    asOf: bookRow.cts,
+    sequence: bookRow.seq,
+    bids: [{ priceUnits: 100000200, quantityAtoms: 12345678 }],
+    asks: [{ priceUnits: 100000301, quantityAtoms: 100300000 }],
+  };
+  expect(a).toEqual(expected);
+  a!.bids[0].quantityAtoms = 0;
+  a!.asks.pop();
+  expect(b).toEqual(expected);
+  expect(await getPerpOrderBook(db, symbol)).toEqual(expected);
+});
+
+it.each([
+  ["different symbol", { s: "ETHUSDT" }],
+  ["missing matching time", { cts: undefined }],
+  ["matching time after generation", { cts: now - 9 }],
+  ["stale matching time with a fresh REST timestamp", { cts: now - 5000 }],
+  ["fractional generation time", { ts: now - 0.5 }],
+  ["generation time after response", { ts: now + 1 }],
+  ["zero update ID", { u: 0 }],
+  ["unsafe update ID", { u: Number.MAX_SAFE_INTEGER + 1 }],
+  ["negative sequence", { seq: -1 }],
+  ["string sequence", { seq: "9876" }],
+  ["empty side", { b: [] }],
+  [
+    "more than 50 levels",
+    { b: Array.from({ length: 51 }, (_, i) => [String(99 - i), "1"]) },
+  ],
+  [
+    "unordered bids",
+    {
+      b: [
+        ["98", "1"],
+        ["99", "1"],
+      ],
+    },
+  ],
+  [
+    "unordered asks",
+    {
+      a: [
+        ["100002", "1"],
+        ["100001", "1"],
+      ],
+    },
+  ],
+  [
+    "duplicate prices",
+    {
+      b: [
+        ["99", "1"],
+        ["99.000", "2"],
+      ],
+    },
+  ],
+  ["locked spread", { a: [["100000.2", "1"]] }],
+  ["crossed spread", { a: [["1", "1"]] }],
+  ["extra tuple field", { b: [["99", "1", "2"]] }],
+  ["number instead of decimal string", { b: [[99, "1"]] }],
+  ["extra price precision", { b: [["99.0001", "1"]] }],
+  ["extra quantity precision", { b: [["99", "0.000000001"]] }],
+  ["non-decimal quantity", { b: [["99", "1e-8"]] }],
+  ["quantity with trailing whitespace", { b: [["99", "1\n"]] }],
+  ["zero price", { b: [["0", "1"]] }],
+  ["zero quantity", { b: [["99", "0"]] }],
+  ["negative quantity", { b: [["99", "-1"]] }],
+  ["overflowing price", { a: [["9007199254740.992", "1"]] }],
+  ["overflowing quantity", { b: [["99", "90071992.54740992"]] }],
+] as const)("rejects invalid order book: %s", async (_, patch) => {
+  feed(() => bookReply(patch));
+  expect(await getPerpOrderBook(db, symbol)).toBeNull();
+});
+
+it.each([
+  ["provider error", now, 10001],
+  ["future response time", now + 1, 0],
+  ["unsafe response time", Number.MAX_SAFE_INTEGER + 1, 0],
+] as const)(
+  "rejects an invalid order book envelope: %s",
+  async (_, time, code) => {
+    feed(() => bookReply({}, time, code));
+    expect(await getPerpOrderBook(db, symbol)).toBeNull();
+  }
+);
+
+it("applies each cutoff to cts, not ts or REST time, even during a shared retry", async () => {
+  const mock = feed(() => bookReply());
+  const snapshots = await Promise.all([
+    getPerpOrderBook(db, symbol, bookRow.cts - 1),
+    getPerpOrderBook(db, symbol, bookRow.cts),
+    getPerpOrderBook(db, symbol, bookRow.cts + 1),
+  ]);
+  expect(snapshots).toEqual([
+    expect.objectContaining({ asOf: bookRow.cts }),
+    null,
+    null,
+  ]);
+  expect(mock).toHaveBeenCalledTimes(2);
+});
+
+it("can retrieve a newer matching snapshot on the shared retry", async () => {
+  let calls = 0;
+  const mock = feed(() =>
+    calls++ === 0
+      ? bookReply()
+      : bookReply({
+          cts: bookRow.cts + 1,
+          u: bookRow.u + 1,
+          seq: bookRow.seq + 1,
+        })
+  );
+  expect(await getPerpOrderBook(db, symbol, bookRow.cts)).toMatchObject({
+    asOf: bookRow.cts + 1,
+    sequence: bookRow.seq + 1,
+  });
+  expect(mock).toHaveBeenCalledTimes(2);
+});
+
+it("validates the symbol and rejects invalid acceptance timestamps without calling Bybit", async () => {
+  const mock = feed(() => bookReply());
+  await expect(getPerpOrderBook(db, "btcusdt")).rejects.toThrow("无效永续合约");
+  for (const invalid of [0, -1, Infinity, NaN, now - 0.5, now + 1]) {
+    expect(await getPerpOrderBook(db, symbol, invalid)).toBeNull();
+  }
+  expect(mock).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["sequence regression", { u: bookRow.u + 1, seq: bookRow.seq - 1 }],
+  ["update ID regression", { u: bookRow.u - 1, seq: bookRow.seq + 1 }],
+  ["reused ID with a higher sequence", { seq: bookRow.seq + 1 }],
+  ["reused sequence with a new ID", { u: bookRow.u + 1 }],
+  ["relabelled matching time", { cts: bookRow.cts + 1 }],
+  ["changed levels on the same sequence", { b: [["99", "1"]] }],
+  [
+    "matching time regression",
+    { cts: bookRow.cts - 1, u: bookRow.u + 1, seq: bookRow.seq + 1 },
+  ],
+  [
+    "generation time regression",
+    { ts: bookRow.ts - 1, u: bookRow.u + 1, seq: bookRow.seq + 1 },
+  ],
+] as const)(
+  "never uses %s to replace the order book watermark",
+  async (_, patch) => {
+    feed(() => bookReply());
+    expect(await getPerpOrderBook(db, symbol)).toMatchObject({
+      sequence: bookRow.seq,
+    });
+    feed(() => bookReply(patch));
+    expect(await getPerpOrderBook(db, symbol)).toBeNull();
+    vi.setSystemTime(now + 1501); // Let the shared transport's error backoff lapse.
+    feed(() =>
+      bookReply({
+        cts: bookRow.cts + 1,
+        u: bookRow.u + 1,
+        seq: bookRow.seq + 1,
+      })
+    );
+    expect(await getPerpOrderBook(db, symbol)).toMatchObject({
+      sequence: bookRow.seq + 1,
+    });
+  }
+);
+
+it("does not fall back to prior depth on HTTP failure and shares the rate-limit backoff", async () => {
+  feed(() => bookReply());
+  expect(await getPerpOrderBook(db, symbol)).not.toBeNull();
+  const calls = feed(() => new Response("Blocked", { status: 429 }));
+  expect(await getPerpOrderBook(db, symbol)).toBeNull();
+  expect(await getPerpOrderBook(db, "ETHUSDT")).toBeNull();
+  expect(await getPerpInstrument(db, symbol)).toBeNull();
+  expect(calls).toHaveBeenCalledTimes(1);
+});
+
 it("filters unauthorized instruments and applies a common rate limit backoff", async () => {
   const calls = feed(
     () =>

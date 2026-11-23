@@ -159,6 +159,77 @@ it("upgrades on startup, preserving rows, indexes and live foreign keys across r
   ).toEqual([]);
 });
 
+it("upgrades legacy weekly events on startup, retaining event order and indexes", async () => {
+  directory = mkdtempSync(join(tmpdir(), "lucky-perp-margin-"));
+  vi.stubEnv("SQLITE_PATH", join(directory, "legacy.db"));
+  const legacy = await start();
+  legacy.exec(`
+    INSERT INTO users(id,linuxdo_id,username,group_name) VALUES(1,'1','Trader','Trader');
+    DROP TABLE perp_events;
+    CREATE TABLE perp_events (
+      id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),symbol TEXT,
+      kind TEXT NOT NULL CHECK(kind IN ('in','out','open','close','liquidate','funding')),
+      cash_delta_units INTEGER NOT NULL,margin_delta_units INTEGER NOT NULL,
+      entry_delta_units INTEGER NOT NULL,qty_delta_atoms INTEGER NOT NULL,created_at INTEGER NOT NULL);
+    CREATE INDEX perp_event_time ON perp_events(created_at,id);
+    CREATE INDEX perp_event_user_time ON perp_events(user_id,created_at,id);
+    INSERT INTO perp_events VALUES(3,1,NULL,'in',10000,0,0,0,997);
+    INSERT INTO perp_events VALUES(12,1,'BTCUSDT','open',-5060,5000,10000,100000000,998);
+    INSERT INTO perp_wallets VALUES(1,4940);
+    INSERT INTO perp_positions VALUES(1,'BTCUSDT','long',100000000,10000,5000,2,998,998,5000);
+  `);
+  const selectEvents = "SELECT * FROM perp_events ORDER BY created_at,id";
+  const selectIndexes =
+    "SELECT sql FROM sqlite_schema WHERE type='index' AND tbl_name='perp_events' ORDER BY name";
+  const original = legacy.prepare(selectEvents).all();
+  const indexes = legacy.prepare(selectIndexes).all();
+  const upgraded = await start();
+  expect(upgraded.prepare(selectEvents).all()).toEqual(original);
+  expect(upgraded.prepare(selectIndexes).all()).toEqual(indexes);
+  expect(upgraded.pragma("foreign_key_check")).toEqual([]);
+  expect(() =>
+    upgraded.exec(
+      "INSERT INTO perp_events VALUES(13,1,'BTCUSDT','margin',0,1,0,0,999)"
+    )
+  ).toThrow(/CHECK/);
+
+  vi.spyOn(Date, "now").mockReturnValue(1000);
+  try {
+    const { addPerpMargin, findPerpMarginReplay } = await import("./engine");
+    const input = {
+      symbol: "BTCUSDT",
+      openedAt: 998,
+      amountUnits: 1000,
+      requestKey: "margin-receipt",
+    };
+    const value = await addPerpMargin(upgraded, 1, input, (_, acceptedAt) => {
+      vi.mocked(Date.now).mockReturnValue(acceptedAt + 1);
+      return { symbol: "BTCUSDT", asOf: acceptedAt + 1, markUnits: 10000 };
+    });
+    expect(upgraded.prepare(selectEvents).all()).toEqual([
+      ...original,
+      {
+        id: 13,
+        user_id: 1,
+        symbol: "BTCUSDT",
+        kind: "margin",
+        cash_delta_units: -1000,
+        margin_delta_units: 1000,
+        entry_delta_units: 0,
+        qty_delta_atoms: 0,
+        created_at: 1001,
+      },
+    ]);
+    const version = upgraded.pragma("schema_version", { simple: true });
+    const reopened = await start();
+    expect(reopened.pragma("schema_version", { simple: true })).toBe(version);
+    expect(reopened.prepare(selectIndexes).all()).toEqual(indexes);
+    expect(findPerpMarginReplay(reopened, 1, input)).toEqual(value);
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
+
 it("uses the same integer range for a fresh installation", async () => {
   vi.stubEnv("SQLITE_PATH", ":memory:");
   const sqlite = await start();

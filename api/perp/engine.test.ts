@@ -15,6 +15,7 @@ import {
   type PerpSnapshot,
 } from "./engine";
 import { getDb } from "../queries/connection";
+import { withTestDepth } from "./depth-fixture";
 let db: Database.Database;
 const symbol = "BTCUSDT",
   qty = 100_000_000,
@@ -36,7 +37,7 @@ const close = (size = qty): PerpOrderInput => ({
 function feed(price = 100_000, overrides: Partial<PerpSnapshot> = {}) {
   return async (ticker: string, acceptedAt: number) => {
     vi.setSystemTime(Math.max(Date.now() + 1, acceptedAt + 1));
-    return {
+    const q = {
       symbol: ticker,
       bidUnits: price,
       askUnits: price,
@@ -48,6 +49,10 @@ function feed(price = 100_000, overrides: Partial<PerpSnapshot> = {}) {
       maxQtyAtoms: 1e10,
       nextFundingAt: Math.max(due, Date.now() + 1000),
       ...overrides,
+    };
+    return {
+      ...withTestDepth(q),
+      ...("orderBook" in overrides ? { orderBook: overrides.orderBook } : {}),
     };
   };
 }
@@ -503,13 +508,14 @@ it("settles short funding once, prohibits evading a due interval, covers short a
 it("liquidates at fresh mark only and caps gap loss at isolated collateral", async () => {
   convert(1, "in", 100000);
   await order(open());
-  const q = {
+  vi.setSystemTime(Date.now() + 1);
+  const q = withTestDepth({
     symbol,
     bidUnits: 70000,
     askUnits: 70100,
     markUnits: 75000,
     asOf: Date.now(),
-  };
+  });
   expect(liquidatePerpPositions(db, { ...q, asOf: q.asOf - 5001 })).toBe(0);
   expect(liquidatePerpPositions(db, q)).toBe(1);
   expect(liquidatePerpPositions(db, q)).toBe(0);
@@ -528,7 +534,7 @@ it("commits the liquidation even when the triggering user order is refused", asy
   await order(open());
   const trigger = open();
   await expect(order(trigger, 75000)).rejects.toThrow("强平");
-  await expect(order(trigger)).rejects.toThrow("请求键");
+  await expect(order(trigger)).rejects.toThrow("强平");
   expect(getPerpAccount(db, 1).positions).toHaveLength(0);
 });
 it("isolates concurrent debits and replays identical simultaneous open requests once", async () => {
@@ -538,4 +544,236 @@ it("isolates concurrent debits and replays identical simultaneous open requests 
   expect(result[0]).toEqual(result[1]);
   await expect(order(open())).rejects.toThrow("可用模拟金");
   expect(getPerpAccount(db, 1).orders).toHaveLength(1);
+});
+
+function finiteBook(
+  bids: [number, number][],
+  asks: [number, number][],
+  asOf = Date.now() + 1
+) {
+  const levels = (rows: [number, number][]) =>
+    rows.map(([priceUnits, quantityAtoms]) => ({ priceUnits, quantityAtoms }));
+  return {
+    symbol,
+    asOf,
+    sequence: asOf,
+    bids: levels(bids),
+    asks: levels(asks),
+  };
+}
+
+it("requires real depth and cannot turn an incomplete open into a debit", async () => {
+  convert(1, "in", 100000);
+  const user = () => getPerpAccount(db, 1);
+  const before = user();
+  await expect(
+    placePerpOrder(db, 1, open(), feed(100000, { orderBook: undefined }))
+  ).rejects.toThrow("订单簿");
+  const book = finiteBook(
+    [[99_999, qty]],
+    [
+      [100_000, qty / 2],
+      [100_501, qty / 2],
+    ]
+  );
+  await expect(
+    placePerpOrder(db, 1, open(), feed(100000, { orderBook: book }))
+  ).rejects.toThrow("滑点");
+  expect(user()).toEqual(before);
+  expect(
+    db.prepare("SELECT count(*) FROM perp_depth_consumption").pluck().get()
+  ).toBe(0);
+  const next = { ...book, sequence: book.sequence + 1, asOf: Date.now() + 1 };
+  const r = await placePerpOrder(
+    db,
+    1,
+    { ...open(), slippageBps: 51 },
+    feed(100000, { orderBook: next })
+  );
+  expect(r).toMatchObject({
+    priceUnits: 100_251,
+    feeUnits: 61,
+    quantityAtoms: qty,
+  });
+  expect(user().positions[0]).toMatchObject({
+    entryNotionalUnits: 100_250,
+    marginUnits: 20_050,
+  });
+});
+
+it("serializes shared depth across distinct request keys and preserves untouched balance", async () => {
+  for (const user of [1, 2]) convert(user, "in", 100000);
+  const book = finiteBook([[99_999, qty]], [[100_000, qty]], Date.now() + 2);
+  const both = async (ticker: string, acceptedAt: number) => {
+    const q = await feed(100000, { orderBook: book })(ticker, acceptedAt);
+    vi.setSystemTime(Math.max(Date.now(), book.asOf));
+    return q;
+  };
+  const first = open();
+  const attempts = await Promise.allSettled([
+    placePerpOrder(db, 1, first, both),
+    placePerpOrder(db, 2, open(), both),
+  ]);
+  expect(attempts.map(r => r.status)).toEqual(["fulfilled", "rejected"]);
+  expect(getPerpAccount(db, 2)).toMatchObject({
+    availableCashUnits: 100000,
+    orders: [],
+    positions: [],
+  });
+  expect(await placePerpOrder(db, 1, first, async () => null)).toEqual(
+    (attempts[0] as PromiseFulfilledResult<unknown>).value
+  );
+});
+
+it("leaves the unfilled part of market closes open and replays the original partial receipt", async () => {
+  convert(1, "in", 100000);
+  await order(open());
+  const q = finiteBook(
+    [
+      [110_000, Math.floor(qty / 3)],
+      [109_400, qty],
+    ],
+    [[110_001, qty]]
+  );
+  const request = close();
+  const r = await placePerpOrder(
+    db,
+    1,
+    request,
+    feed(110000, { orderBook: q })
+  );
+  expect(r).toMatchObject({
+    action: "close",
+    quantityAtoms: 33_330_000,
+    priceUnits: 110_000,
+    pnlUnits: 3333,
+  });
+  expect(getPerpAccount(db, 1).positions[0]).toMatchObject({
+    quantityAtoms: 66_670_000,
+    marginUnits: 13_334,
+    entryNotionalUnits: 66_670,
+  });
+  expect(await placePerpOrder(db, 1, request, async () => null)).toEqual(r);
+  await expect(
+    placePerpOrder(
+      db,
+      1,
+      { ...request, quantityAtoms: r.quantityAtoms },
+      async () => null
+    )
+  ).rejects.toThrow("请求键");
+  await expect(
+    placePerpOrder(db, 1, { ...request, slippageBps: 51 }, async () => null)
+  ).rejects.toThrow("请求键");
+});
+
+it("does not consume bankrupt partial closes, keeping the existing isolated loss protection", async () => {
+  convert(1, "in", 100000);
+  await order(open());
+  const q = finiteBook([[79_000, qty / 2]], [[79_500, qty]]);
+  const before = getPerpAccount(db, 1);
+  await expect(
+    placePerpOrder(db, 1, close(), feed(90_000, { orderBook: q }))
+  ).rejects.toThrow("耗尽分摊保证金");
+  expect(getPerpAccount(db, 1)).toEqual(before);
+  expect(
+    db.prepare("SELECT COUNT(*) FROM perp_depth_consumption").pluck().get()
+  ).toBe(0);
+});
+
+it("locks triggered ordinary liquidation through outage and recovery; uses only actual full-depth liquidity", async () => {
+  convert(1, "in", 100000);
+  await order(open());
+  vi.setSystemTime(Date.now() + 1);
+  const mark = {
+    symbol,
+    markUnits: 75_000,
+    bidUnits: 74_900,
+    askUnits: 75_100,
+    asOf: Date.now(),
+  };
+  expect(liquidatePerpPositions(db, mark)).toBe(0);
+  expect(
+    db.prepare("SELECT COUNT(*) FROM perp_liquidation_locks").pluck().get()
+  ).toBe(1);
+  const thin = finiteBook([[102_000, qty / 2]], [[102_010, qty]]);
+  await expect(
+    placePerpOrder(db, 1, open(), feed(102_000, { orderBook: thin }))
+  ).rejects.toThrow("强平");
+  expect(getPerpAccount(db, 1).positions[0].quantityAtoms).toBe(qty);
+  const recovered = finiteBook(
+    [
+      [102_000, qty / 2],
+      [100_000, qty / 2],
+    ],
+    [[102_010, qty]]
+  );
+  vi.setSystemTime(recovered.asOf);
+  expect(
+    liquidatePerpPositions(db, {
+      ...mark,
+      asOf: Date.now(),
+      markUnits: 102_000,
+      orderBook: recovered,
+    })
+  ).toBe(1);
+  expect(getPerpAccount(db, 1).orders[0]).toMatchObject({
+    action: "liquidate",
+    priceUnits: 101_000,
+    quantityAtoms: qty,
+  });
+  expect(
+    db.prepare("SELECT COUNT(*) FROM perp_liquidation_locks").pluck().get()
+  ).toBe(0);
+  expect(
+    db
+      .prepare(
+        "SELECT notional_units FROM perp_order_execution ORDER BY order_id DESC LIMIT 1"
+      )
+      .get()
+  ).toEqual({ notional_units: 101_000 });
+});
+
+it("records historical funding liquidation risk without a synthetic fill", async () => {
+  convert(1, "in", 100000);
+  await order(open());
+  vi.setSystemTime(due);
+  expect(
+    applyPerpFunding(db, symbol, {
+      asOf: due,
+      rateE8: 0,
+      markUnits: 75000,
+      nextFundingAt: due + 10000,
+    })
+  ).toBe(1);
+  expect(getPerpAccount(db, 1).orders).toHaveLength(1);
+  expect(
+    db
+      .prepare(
+        "SELECT triggered_at,mark_units FROM perp_liquidation_locks WHERE user_id=1"
+      )
+      .get()
+  ).toEqual({ triggered_at: due, mark_units: 75000 });
+  const book = finiteBook(
+    [
+      [95_000, qty / 2],
+      [94_000, qty / 2],
+    ],
+    [[96_000, qty]]
+  );
+  vi.setSystemTime(book.asOf);
+  expect(
+    liquidatePerpPositions(db, {
+      symbol,
+      asOf: Date.now(),
+      bidUnits: 95_000,
+      askUnits: 96_000,
+      markUnits: 95_000,
+      orderBook: book,
+    })
+  ).toBe(1);
+  expect(getPerpAccount(db, 1).orders[0]).toMatchObject({
+    action: "liquidate",
+    priceUnits: 94_500,
+  });
 });

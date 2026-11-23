@@ -96,6 +96,18 @@ it("starts with three calculate placeholders, a non-submit calculation and a nat
 const leverageControl = (html: string) =>
   html.match(/<input[^>]*name="leverage"[^>]*>/)?.[0];
 
+const leverageSlider = (html: string) =>
+  html.match(
+    /<input[^>]*type="range"[^>]*aria-valuetext="[^"]+ 倍"[^>]*>/
+  )?.[0];
+
+const leveragePresets = (html: string) =>
+  [
+    ...html.matchAll(
+      /<button[^>]*aria-pressed="(true|false)"[^>]*>([0-9]+)×<[/]button>/g
+    ),
+  ].map(([, pressed, value]) => [Number(value), pressed === "true"]);
+
 type Market = typeof props.market;
 const tradeMarkup = (range: [number, number], market: Market = props.market) =>
   renderToStaticMarkup(
@@ -133,6 +145,29 @@ it.each([
     );
   }
 );
+
+it("shows a native integer slider and only valid common multiples, including both endpoints", () => {
+  const html = tradeMarkup([4, 100], {
+    ...props.market,
+    instrument: { ...props.market.instrument!, maxLeverage: 32 },
+  });
+  expect(leverageSlider(html)).toContain('min="4" max="32" step="1"');
+  expect(leverageSlider(html)).toContain('aria-valuetext="4 倍"');
+  expect(leveragePresets(html)).toEqual([
+    [4, true],
+    [5, false],
+    [10, false],
+    [20, false],
+    [25, false],
+    [32, false],
+  ]);
+});
+
+it("omits redundant controls for a single permitted leverage", () => {
+  const html = tradeMarkup([5, 12]);
+  expect(leverageSlider(html)).toBeUndefined();
+  expect(leveragePresets(html)).toEqual([]);
+});
 
 it("does not substitute a lower leverage when the instrument cannot meet the site minimum", () => {
   const html = tradeMarkup([6, 10]);
@@ -181,6 +216,7 @@ it("only offers long and short in the opening form even with a current position,
         nextFundingAt: 100_000,
         entryPriceUnits: 100_000,
         liquidationPriceUnits: 149_000,
+        liquidationTriggeredAt: null,
       },
     ],
   };
@@ -193,6 +229,8 @@ it("only offers long and short in the opening form even with a current position,
   expect(open).toContain("成本（保证金 + 手续费）");
   expect(leverageControl(open)).toContain('value="2"');
   expect(leverageControl(open)).toContain("disabled");
+  expect(leverageSlider(open)).toBeUndefined();
+  expect(leveragePresets(open)).toEqual([]);
   expect(open).not.toContain("不能加仓");
   const restrictedAccount = {
     ...account,
@@ -215,6 +253,7 @@ it("only offers long and short in the opening form even with a current position,
     })
   );
   expect(leverageControl(close)).toBeUndefined();
+  expect(leverageSlider(close)).toBeUndefined();
   expect(close).not.toContain("不能加仓");
   expect(close).toMatch(/<button(?![^>]*disabled=")[^>]*>100%<\/button>/);
   expect(close).not.toContain('value="openLong"');

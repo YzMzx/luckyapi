@@ -33,6 +33,12 @@ import {
   type PerpApi,
 } from "./format";
 import { Table } from "./shared";
+import {
+  getLiquidationUnits,
+  liquidationLine,
+  syncLiquidationLine,
+  type LiquidationPosition,
+} from "./chartLiquidation";
 
 type Market = PerpApi["market"];
 type Bar = Market["bars"][number];
@@ -94,6 +100,8 @@ function PerpCanvas({
   precision,
   data,
   markers,
+  liquidationUnits,
+  liquidationLegendId,
   onHover,
   onSelect,
 }: {
@@ -103,6 +111,8 @@ function PerpCanvas({
   precision: number;
   data: KLineData[];
   markers: OverlayCreate[];
+  liquidationUnits: number | null;
+  liquidationLegendId: string;
   onHover: (timestamp: number | null) => void;
   onSelect: (timestamp: number) => void;
 }) {
@@ -155,6 +165,9 @@ function PerpCanvas({
               ];
             },
           });
+        }
+        if (!lib.getSupportedOverlays().includes(liquidationLine.name)) {
+          lib.registerOverlay(liquidationLine);
         }
         const instance = lib.init(element, {
           locale: "zh-CN",
@@ -273,6 +286,10 @@ function PerpCanvas({
       chart.createOverlay(markers.map(marker => ({ ...marker })));
   }, [chart, date, data, markers]);
 
+  useEffect(() => {
+    if (chart) syncLiquidationLine(chart, liquidationUnits);
+  }, [chart, liquidationUnits]);
+
   function pan(event: KeyboardEvent<HTMLDivElement>) {
     if (
       !chart ||
@@ -304,7 +321,11 @@ function PerpCanvas({
           className="h-[23rem] w-full rounded-xl sm:h-[27rem]"
           role="region"
           aria-label="价格与成交量图"
-          aria-describedby={helpId}
+          aria-describedby={
+            liquidationUnits === null
+              ? helpId
+              : helpId + " " + liquidationLegendId
+          }
           tabIndex={0}
           onKeyDown={pan}
           onPointerLeave={() => onHover(null)}
@@ -349,16 +370,19 @@ function PerpCanvas({
 export function PerpChart({
   market,
   trades,
+  position,
 }: {
   market: Market;
   trades: Trades;
+  position?: LiquidationPosition;
 }) {
   const duration = market.interval * 60_000;
   const [chosenDay, setDay] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [hover, setHover] = useState<number | null>(null);
   const dateId = useId(),
-    candleId = useId();
+    candleId = useId(),
+    liquidationLegendId = useId();
   const dates = useMemo(
     () =>
       [...new Set(market.bars.map(bar => day(dayStart(bar.endAt, duration))))]
@@ -407,6 +431,7 @@ export function PerpChart({
         当前没有可展示的 Bybit {market.interval} 分钟行情。
       </p>
     );
+  const liquidationUnits = getLiquidationUnits(market.symbol, position);
   const fills = groups.get(bar.endAt - duration) ?? [];
   const tick = market.instrument?.tickSizeUnits;
   const precision = tick
@@ -428,6 +453,16 @@ export function PerpChart({
           <p className="mt-1 text-xs text-muted-foreground">
             北京时间 · 绿涨红跌 · 黄色标记为个人成交
           </p>
+          {liquidationUnits !== null && (
+            <p id={liquidationLegendId} className="mt-1 text-xs text-[#c4b5fd]">
+              <span
+                aria-hidden="true"
+                className="mr-1 inline-block w-4 align-middle border-t border-dashed border-current"
+              />
+              逐仓预估强平价：{sim(liquidationUnits)} USDT ·
+              由标记价触发，不代表成交价。超出图中价格范围时仅显示数值。
+            </p>
+          )}
         </div>
         <div>
           <label htmlFor={dateId} className="text-xs">
@@ -456,6 +491,8 @@ export function PerpChart({
         precision={precision}
         data={data}
         markers={markers}
+        liquidationUnits={liquidationUnits}
+        liquidationLegendId={liquidationLegendId}
         onHover={setHover}
         onSelect={setSelected}
       />

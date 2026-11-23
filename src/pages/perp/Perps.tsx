@@ -14,6 +14,7 @@ import { useMe } from "@/hooks/useMe";
 import { PerpChart } from "./PerpChart";
 import { PerpRules } from "./PerpRules";
 import { PendingOrders } from "./PendingOrders";
+import { PositionMarginAction } from "./PositionMarginAction";
 import { ExchangeForm, TradeForm } from "./PerpForms";
 import {
   type PerpApi,
@@ -82,7 +83,7 @@ function PositionRow({
       <td>
         <PnlAmount units={pnl} />
       </td>
-      <td>
+      <td className="[&>button+dialog+button]:ml-2">
         <button
           type="button"
           className={button}
@@ -141,6 +142,10 @@ function PositionRow({
               </p>
             ))}
         </dialog>
+        <PositionMarginAction
+          position={p}
+          availableCashUnits={account.availableCashUnits}
+        />
       </td>
     </tr>
   );
@@ -417,6 +422,7 @@ export default function Perps() {
                     key={symbol + ":" + interval}
                     market={current}
                     trades={wallet?.orders ?? []}
+                    position={wallet?.positions.find(p => p.symbol === symbol)}
                   />
                 ) : (
                   <p role="status" className="py-6 text-muted-foreground">

@@ -5,12 +5,14 @@ import { PERP_WEEKLY_SCHEMA, listPerpWeeks } from "./weekly";
 import { refreshPerpMaintenance } from "./maintenance";
 import {
   getPerpInstrument,
+  getPerpOrderBook,
   getPerpQuote,
   getFundingHistory,
   getBoundaryMark,
 } from "./market";
 vi.mock("./market", () => ({
   getPerpInstrument: vi.fn(),
+  getPerpOrderBook: vi.fn(),
   getPerpQuote: vi.fn(),
   getBoundaryMark: vi.fn(),
   getFundingHistory: vi.fn(),
@@ -23,6 +25,16 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(monday);
   vi.resetAllMocks();
+  vi.mocked(getPerpOrderBook).mockImplementation(async (_db, symbol) => {
+    const price = Date.now() === monday + 15_000 ? 1_000 : 100_000;
+    return {
+      symbol,
+      asOf: Date.now(),
+      sequence: Date.now(),
+      bids: [{ priceUnits: price - 1, quantityAtoms: 1e12 }],
+      asks: [{ priceUnits: price + 1, quantityAtoms: 1e12 }],
+    };
+  });
   db = new Database(":memory:");
   db.exec(
     "CREATE TABLE users(id INTEGER PRIMARY KEY,username TEXT,display_name TEXT,group_name TEXT,banned INTEGER DEFAULT 0); INSERT INTO users VALUES(1,'trader','','owner',0);" +
@@ -177,7 +189,9 @@ it("settles outstanding funding and liquidates before processing a close order o
     "UPDATE perp_pending_orders SET action='close',side='long',limit_price_units=1"
   ).run();
   // A real reduce-only order carries the identity of the position it was submitted against.
-  db.prepare("INSERT INTO perp_pending_position_bindings(pending_id,opened_at) SELECT id,? FROM perp_pending_orders").run(monday);
+  db.prepare(
+    "INSERT INTO perp_pending_position_bindings(pending_id,opened_at) SELECT id,? FROM perp_pending_orders"
+  ).run(monday);
   vi.setSystemTime(due + 100);
   vi.mocked(getPerpQuote).mockImplementation(async () =>
     quote(1000, Date.now(), monday + 3600000)

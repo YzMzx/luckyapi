@@ -125,8 +125,11 @@ function valid(c: EstimateInput) {
         (p.leverage === c.leverage &&
           (c.action === "openLong") === (p.side === "long"));
 }
-function amounts(c: EstimateInput, qty: bigint) {
-  const notional = (qty * BigInt(c.priceUnits)) / SCALE;
+function amounts(c: EstimateInput, qty: bigint, filledNotional?: number) {
+  const notional =
+    filledNotional === undefined
+      ? (qty * BigInt(c.priceUnits)) / SCALE
+      : BigInt(filledNotional);
   const fee = ceil(notional * BigInt(c.takerFeeBps), BPS);
   const margin = c.action === "close" ? 0n : ceil(notional, BigInt(c.leverage));
   return { notional, fee, margin, cost: margin + fee };
@@ -204,17 +207,27 @@ export function percentageQuantity(c: EstimateInput, percent: number): number {
 }
 export function estimateOrder(
   c: EstimateInput,
-  quantityAtoms: number
+  quantityAtoms: number,
+  filledNotional?: number
 ): EstimateResult | null {
   if (
     !valid(c) ||
     !safe(quantityAtoms, 1) ||
     quantityAtoms % c.qtyStepAtoms ||
-    quantityAtoms > maxOrderQuantity(c)
+    (filledNotional === undefined
+      ? quantityAtoms > maxOrderQuantity(c)
+      : !safe(filledNotional, 1)) ||
+    quantityAtoms > c.maxQtyAtoms ||
+    (c.action === "close" &&
+      quantityAtoms >
+        Math.min(
+          c.position!.quantityAtoms,
+          c.availableCloseAtoms ?? Number.MAX_SAFE_INTEGER
+        ))
   )
     return null;
   const qty = BigInt(quantityAtoms),
-    a = amounts(c, qty),
+    a = amounts(c, qty, filledNotional),
     p = c.position;
   if (a.notional > SAFE) return null;
   let remainingQty = BigInt(p?.quantityAtoms ?? 0),
@@ -244,7 +257,11 @@ export function estimateOrder(
   } else {
     if (
       quantityAtoms < c.minQtyAtoms ||
-      a.notional < BigInt(Math.max(1, c.minNotionalUnits))
+      a.notional < BigInt(Math.max(1, c.minNotionalUnits)) ||
+      a.cost > BigInt(c.availableCashUnits) ||
+      a.notional > BigInt(c.notionalHeadroomUnits ?? Number.MAX_SAFE_INTEGER) ||
+      entry + a.notional >
+        BigInt(c.symbolNotionalLimitUnits ?? Number.MAX_SAFE_INTEGER)
     )
       return null;
     remainingQty += qty;

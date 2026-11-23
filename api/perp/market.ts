@@ -2,6 +2,15 @@ import type Database from "better-sqlite3";
 import { z } from "zod";
 import type { PerpKlineInterval } from "@contracts/perp-kline";
 import { perpSymbolSchema, readPerpConfig } from "./config";
+import type {
+  PerpOrderBook as DepthOrderBook,
+  PerpOrderBookLevel,
+} from "./depth";
+export type { PerpOrderBookLevel } from "./depth";
+export type PerpOrderBook = DepthOrderBook & {
+  bids: PerpOrderBookLevel[];
+  asks: PerpOrderBookLevel[];
+};
 
 export const PERP_MARKET_SCHEMA = `
 CREATE TABLE IF NOT EXISTS perp_chart_cache(symbol TEXT PRIMARY KEY, fetched_at INTEGER NOT NULL, bars_json TEXT NOT NULL);
@@ -52,7 +61,7 @@ function requireData(condition: unknown): asserts condition {
 }
 const decimals = /^-?[0-9]{1,17}(?:[.][0-9]{1,18})?$/;
 function units(raw: string, places: number, signed = false) {
-  requireData(decimals.test(raw));
+  requireData(raw.trim() === raw && decimals.test(raw));
   const negative = raw.startsWith("-");
   const [whole, fraction = ""] = (negative ? raw.slice(1) : raw).split(".");
   requireData((signed || !negative) && !/[1-9]/.test(fraction.slice(places)));
@@ -83,9 +92,9 @@ type Endpoint =
   | "instruments-info"
   | "funding/history"
   | "mark-price-kline";
-async function request(
+async function requestRaw(
   db: Db,
-  endpoint: Endpoint,
+  endpoint: Endpoint | "orderbook",
   symbol: string,
   params: Record<string, string> = {}
 ) {
@@ -126,22 +135,44 @@ async function request(
     }
     chunks.push(value);
   }
-  const raw = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  if (raw?.retCode === 10006) state.blockedUntil = Date.now() + 10_000;
-  const { time, result } = header.parse(raw);
+  const raw: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (
+    raw !== null &&
+    typeof raw === "object" &&
+    "retCode" in raw &&
+    raw.retCode === 10006
+  )
+    state.blockedUntil = Date.now() + 10_000;
+  return raw;
+}
+async function request(
+  db: Db,
+  endpoint: Endpoint,
+  symbol: string,
+  params?: Record<string, string>
+) {
+  const { time, result } = header.parse(
+    await requestRaw(db, endpoint, symbol, params)
+  );
   requireData(result.symbol === undefined || result.symbol === symbol);
   return { time, result };
 }
 type CacheState = {
   flights: Map<string, Promise<unknown>>;
   responses: Map<string, { until: number; value: unknown }>;
+  orderBooks: Map<string, OrderBookSnapshot>;
   blockedUntil: number;
 };
 const cache = new WeakMap<Db, CacheState>();
 function cacheFor(db: Db) {
   let state = cache.get(db);
   if (!state) {
-    state = { flights: new Map(), responses: new Map(), blockedUntil: 0 };
+    state = {
+      flights: new Map(),
+      responses: new Map(),
+      orderBooks: new Map(),
+      blockedUntil: 0,
+    };
     cache.set(db, state);
   }
   return state;
@@ -196,6 +227,133 @@ const tickerSchema = z.object({
 function fresh(time: number) {
   return time <= Date.now() && Date.now() - time < 5_000;
 }
+const orderBookLimit = 50;
+const positiveInt = z.number().int().positive();
+const orderBookSide = z
+  .array(z.tuple([z.string(), z.string()]))
+  .min(1)
+  .max(orderBookLimit);
+const orderBookSchema = z.object({
+  retCode: z.literal(0),
+  time: positiveInt,
+  result: z.object({
+    s: z.string(),
+    ts: positiveInt,
+    cts: positiveInt,
+    u: positiveInt,
+    seq: positiveInt,
+    b: orderBookSide,
+    a: orderBookSide,
+  }),
+});
+type OrderBookSnapshot = { book: PerpOrderBook; ts: number; updateId: number };
+
+function bookLevels(
+  rows: [string, string][],
+  descending: boolean
+): PerpOrderBookLevel[] {
+  let previous = descending ? Infinity : 0;
+  return rows.map(([price, quantity]) => {
+    const priceUnits = units(price, 3),
+      quantityAtoms = units(quantity, 8);
+    requireData(
+      priceUnits > 0 &&
+        quantityAtoms > 0 &&
+        (descending ? previous > priceUnits : previous < priceUnits)
+    );
+    previous = priceUnits;
+    return { priceUnits, quantityAtoms };
+  });
+}
+
+function sameLevels(a: PerpOrderBookLevel[], b: PerpOrderBookLevel[]) {
+  return (
+    a.length === b.length &&
+    a.every(
+      (level, i) =>
+        level.priceUnits === b[i].priceUnits &&
+        level.quantityAtoms === b[i].quantityAtoms
+    )
+  );
+}
+
+/** Only executable market depth; never falls back to old or synthetic levels. */
+export async function getPerpOrderBook(
+  db: Db,
+  symbol: string,
+  afterMs?: number
+): Promise<PerpOrderBook | null> {
+  requireSymbol(symbol);
+  if (
+    afterMs !== undefined &&
+    (!Number.isSafeInteger(afterMs) || afterMs <= 0 || afterMs > Date.now())
+  )
+    return null;
+
+  const load = () =>
+    shared(db, "orderbook:" + symbol, 0, async () => {
+      const { time, result } = orderBookSchema.parse(
+        await requestRaw(db, "orderbook", symbol, {
+          limit: String(orderBookLimit),
+        })
+      );
+      const { s, ts, cts, seq, u } = result;
+      requireData(
+        s === symbol && cts <= ts && ts <= time && fresh(time) && fresh(cts)
+      );
+      const bids = bookLevels(result.b, true),
+        asks = bookLevels(result.a, false);
+      requireData(bids[0].priceUnits < asks[0].priceUnits);
+      const book: PerpOrderBook = {
+        symbol,
+        asOf: cts,
+        sequence: seq,
+        bids,
+        asks,
+      };
+      const snapshots = cacheFor(db).orderBooks;
+      const prior = snapshots.get(symbol);
+      if (prior) {
+        requireData(cts >= prior.book.asOf && ts >= prior.ts);
+        if (seq === prior.book.sequence) {
+          // A REST replay is fine, but must never acquire a new cts or liquidity.
+          requireData(
+            cts === prior.book.asOf &&
+              u === prior.updateId &&
+              sameLevels(bids, prior.book.bids) &&
+              sameLevels(asks, prior.book.asks)
+          );
+        } else {
+          requireData(seq > prior.book.sequence && u > prior.updateId);
+        }
+      }
+      snapshots.set(symbol, { book, ts, updateId: u });
+      return book;
+    });
+
+  let book = await load();
+  if (afterMs !== undefined && book && book.asOf <= afterMs) {
+    // An in-flight response can predate some callers' accepted orders. Give all
+    // such callers one shared second pull, then apply their individual cutoff.
+    book = await shared(db, "orderbook-retry:" + symbol, 0, async () => {
+      await new Promise(resolve => setTimeout(resolve, 350));
+      return load();
+    });
+  }
+  if (
+    !book ||
+    !fresh(book.asOf) ||
+    (afterMs !== undefined && book.asOf <= afterMs)
+  )
+    return null;
+  // Consumers cannot mutate the shared watermark or another caller's levels.
+  return {
+    ...book,
+    bids: book.bids.map(level => ({ ...level })),
+    asks: book.asks.map(level => ({ ...level })),
+  };
+}
+
 const phaseFinishedReason =
   "Bybit 公共行情显示该合约盘前阶段已结束（Finished），本站暂不支持下单。";
 type QuoteStatus = { quote: PerpQuote | null; readOnlyReason: string | null };

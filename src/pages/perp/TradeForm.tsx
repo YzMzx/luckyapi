@@ -22,6 +22,10 @@ import {
   type EstimateInput,
 } from "@contracts/perp-estimate";
 
+const commonLeverages = [1, 2, 3, 5, 10, 20, 25, 50, 75, 100];
+const rangeInput =
+  "mt-2 block h-8 w-full cursor-pointer accent-amber-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300 disabled:cursor-not-allowed";
+
 type OpenAction = "openLong" | "openShort";
 type Action = OpenAction | "close";
 type Mode = "market" | "limit" | "conditionalMarket" | "conditionalLimit";
@@ -45,11 +49,10 @@ type Intent = {
   action: Action;
   quantityAtoms: number;
   leverage?: number;
+  slippageBps?: number;
   requestKey: string;
   terms: Terms;
 };
-const signedSide = (action: Action, short: boolean) =>
-  action === "openLong" || (action === "close" && short);
 
 export function TradeForm({
   market,
@@ -71,6 +74,9 @@ export function TradeForm({
     [mode, setMode] = useState<Mode>("market"),
     [leverageText, setLeverageText] = useState<string | null>(null),
     [leverageChecked, setLeverageChecked] = useState(false);
+  const [slippage, setSlippage] = useState("0.5");
+  const [calculating, setCalculating] = useState(false);
+  const previewRequest = useRef(0);
   const [qty, setQty] = useState(""),
     [limit, setLimit] = useState(""),
     [trigger, setTrigger] = useState("");
@@ -83,6 +89,7 @@ export function TradeForm({
     estimate: NonNullable<ReturnType<typeof estimateOrder>>;
     reference: number;
     asOf: number;
+    worst?: number;
     context: string;
   }>(null);
   const sending = useRef(false),
@@ -92,11 +99,12 @@ export function TradeForm({
   const busy = direct.isPending || pending.isPending;
   const blockedReasonId = useId(),
     leverageId = useId(),
-    leverageHelpId = useId();
+    leverageSliderId = useId(),
+    leverageHelpId = useId(),
+    slippageHelpId = useId();
   const unit = baseCoin(market.symbol),
     closing = variant === "close",
-    action: Action = closing ? "close" : openAction,
-    buying = signedSide(action, pos?.side === "short");
+    action: Action = closing ? "close" : openAction;
   const conditional =
       mode === "conditionalLimit" || mode === "conditionalMarket",
     priced = mode === "conditionalLimit" || mode === "limit";
@@ -128,6 +136,9 @@ export function TradeForm({
     account.config.symbols.some(
       s => s.symbol === market.symbol && s.openEnabled
     );
+  const leverageDisabled = !!pos || !rangeAvailable || !canOpen || !quote;
+  const useSlippage = mode === "market" || mode === "conditionalMarket";
+  const slippageBps = decimalUnits(slippage, 2);
   const limitUnits = decimalUnits(limit, 3),
     triggerUnits = decimalUnits(trigger, 3),
     atoms = decimalUnits(qty, 8);
@@ -183,6 +194,9 @@ export function TradeForm({
                     : "";
   const problem =
     baseProblem ||
+    (useSlippage && (!slippageBps || slippageBps > 1000)
+      ? "滑点上限须为 0.01%–10%"
+      : "") ||
     (intent && !closing && intent.leverage !== leverage
       ? "杠杆已变化，请返回修改并重新核对委托。"
       : "") ||
@@ -216,6 +230,7 @@ export function TradeForm({
     leverage,
     limitUnits,
     triggerUnits,
+    slippageBps,
     direction,
     pos?.quantityAtoms,
     pos?.entryNotionalUnits,
@@ -275,10 +290,16 @@ export function TradeForm({
         ],
       ];
   function edit() {
+    previewRequest.current++;
+    setCalculating(false);
     setCalculated(null);
     setIntent(null);
     setMessage("");
     setPct(null);
+  }
+  function changeLeverage(value: string) {
+    edit();
+    setLeverageText(value);
   }
   function size(pct: number) {
     edit();
@@ -286,15 +307,49 @@ export function TradeForm({
     const n = percentageQuantity(sizing, pct);
     setQty(n ? (n / 1e8).toFixed(8) : "");
   }
-  function calculate() {
-    if (problem || !quote) return;
-    const estimate = estimateOrder(sizing, atoms);
-    if (estimate) {
-      setCalculated({ estimate, reference: px, asOf: quote.asOf, context });
+  async function calculate() {
+    if (problem || !quote || calculating) return;
+    const request = ++previewRequest.current;
+    setCalculating(true);
+    try {
+      let reference = px,
+        asOf = quote.asOf,
+        quantity = atoms,
+        notional: number | undefined,
+        worst: number | undefined;
+      if (mode === "market") {
+        const depth = await utils.client.perps.previewDepth.query({
+          symbol: market.symbol,
+          action,
+          quantityAtoms: atoms,
+          slippageBps,
+        });
+        if (request !== previewRequest.current) return;
+        if (
+          !depth.quantityAtoms ||
+          depth.priceUnits === null ||
+          (!closing && depth.quantityAtoms < atoms)
+        )
+          throw new Error("滑点保护范围内的深度不足，无法按所选数量成交");
+        reference = depth.priceUnits;
+        asOf = depth.asOf;
+        quantity = depth.quantityAtoms;
+        notional = depth.notionalUnits;
+        worst = depth.worstPriceUnits ?? undefined;
+      }
+      const estimate = estimateOrder(sizing, quantity, notional);
+      if (!estimate)
+        throw new Error("当前参数或订单簿成交额超出可用额度，请调整数量后重试");
+      setCalculated({ estimate, reference, asOf, context, worst });
       setMessage("");
-    } else {
+    } catch (error) {
+      if (request !== previewRequest.current) return;
       setCalculated(null);
-      setMessage("当前参数无法估算，请检查数量和参考价格。");
+      setMessage(
+        error instanceof Error ? error.message : "行情预估失败，请重试"
+      );
+    } finally {
+      if (request === previewRequest.current) setCalculating(false);
     }
   }
   function terms(): Terms {
@@ -307,7 +362,7 @@ export function TradeForm({
   }
   async function confirm(e: FormEvent) {
     e.preventDefault();
-    if (problem || sending.current) return;
+    if (problem || sending.current || calculating) return;
     if (!intent) {
       setMessage("");
       setIntent({
@@ -315,6 +370,7 @@ export function TradeForm({
         action,
         quantityAtoms: atoms,
         ...(closing ? {} : { leverage }),
+        ...(useSlippage ? { slippageBps } : {}),
         terms: terms(),
         requestKey: Array.from(crypto.getRandomValues(new Uint8Array(16)), n =>
           n.toString(16).padStart(2, "0")
@@ -334,11 +390,18 @@ export function TradeForm({
           coin(r.quantityAtoms) +
           " " +
           unit +
-          " · 成交价 " +
+          " · 成交均价 " +
           sim(r.priceUnits) +
           " USDT · 手续费 " +
           sim(r.feeUnits) +
           " 模拟金。";
+        if (r.quantityAtoms < intent.quantityAtoms)
+          notice +=
+            " 未成交 " +
+            coin(intent.quantityAtoms - r.quantityAtoms) +
+            " " +
+            unit +
+            " 已保留在原仓位，可重新提交平仓。";
       } else {
         const r = await pending.mutateAsync({ ...base, ...t });
         notice = "委托 #" + r.id + " 已受理，请在「我的委托」查看最新状态。";
@@ -379,6 +442,28 @@ export function TradeForm({
             ))}
           </select>
         </label>
+        {useSlippage && (
+          <label className="block">
+            滑点上限（%）
+            <input
+              className={input}
+              type="number"
+              inputMode="decimal"
+              min="0.01"
+              max="10"
+              step="0.01"
+              aria-describedby={slippageHelpId}
+              value={slippage}
+              onChange={e => {
+                edit();
+                setSlippage(e.target.value);
+              }}
+            />
+            <span id={slippageHelpId} className="text-xs text-muted-foreground">
+              以成交时订单簿的最优价为基准，最多偏离所选比例。
+            </span>
+          </label>
+        )}
         {!closing && (
           <label className="block">
             方向
@@ -413,7 +498,7 @@ export function TradeForm({
               max={rangeAvailable ? range.max : undefined}
               step={1}
               value={leverageValue}
-              disabled={!!pos || !rangeAvailable || !canOpen || !quote}
+              disabled={leverageDisabled}
               aria-describedby={
                 leverageProblem && visibleProblem === leverageProblem
                   ? leverageHelpId + " " + blockedReasonId
@@ -421,10 +506,7 @@ export function TradeForm({
               }
               aria-invalid={showLeverageError}
               onBlur={() => setLeverageChecked(true)}
-              onChange={e => {
-                edit();
-                setLeverageText(e.target.value);
-              }}
+              onChange={e => changeLeverage(e.target.value)}
             />
             <p
               id={leverageHelpId}
@@ -437,6 +519,50 @@ export function TradeForm({
                   ? "等待合约规格，暂不可选择杠杆。"
                   : "本品种暂无可用杠杆。"}
             </p>
+            {!pos && rangeAvailable && range.min < range.max && (
+              <div className="mt-2">
+                <label htmlFor={leverageSliderId} className="text-sm">
+                  滑动选择杠杆
+                </label>
+                <input
+                  id={leverageSliderId}
+                  className={rangeInput}
+                  type="range"
+                  min={range.min}
+                  max={range.max}
+                  step={1}
+                  value={leverageProblem ? range.min : leverage}
+                  disabled={leverageDisabled}
+                  aria-describedby={leverageHelpId}
+                  aria-valuetext={`${leverageProblem ? range.min : leverage} 倍`}
+                  onChange={e => changeLeverage(e.target.value)}
+                />
+                <div
+                  role="group"
+                  aria-label="常用杠杆"
+                  className="flex flex-wrap gap-1.5"
+                >
+                  {[
+                    range.min,
+                    ...commonLeverages.filter(
+                      n => n > range.min && n < range.max
+                    ),
+                    range.max,
+                  ].map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      aria-pressed={leverage === n}
+                      disabled={leverageDisabled}
+                      className={`min-h-9 min-w-10 rounded-md border px-1.5 text-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300 disabled:opacity-50 ${leverage === n ? "border-amber-300 bg-amber-400/15 font-bold text-amber-200" : "border-border hover:border-amber-300/70"}`}
+                      onClick={() => changeLeverage(String(n))}
+                    >
+                      {n}×
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
         {conditional && (
@@ -548,9 +674,15 @@ export function TradeForm({
             type="button"
             onClick={calculate}
             className={button}
-            disabled={!!problem || busy || !!intent}
+            disabled={!!problem || busy || !!intent || calculating}
           >
-            {result ? "重新计算" : closing ? "计算收益" : "计算"}
+            {calculating
+              ? "估算中…"
+              : result
+                ? "重新计算"
+                : closing
+                  ? "计算收益"
+                  : "计算"}
           </button>
         </div>
         <dl
@@ -568,14 +700,11 @@ export function TradeForm({
         {result && (
           <p className="mt-2 text-xs text-muted-foreground">
             {time(result.asOf)} 的参考估算：按
-            {priced
-              ? "限价"
-              : conditional
-                ? "触发价"
-                : buying
-                  ? "卖一价"
-                  : "买一价"}{" "}
+            {priced ? "限价" : conditional ? "触发价" : "订单簿预计均价"}{" "}
             {sim(result.reference)} USDT 计算，不锁定成交价。
+            {result.worst !== undefined &&
+              " 最差成交价 " + sim(result.worst) + " USDT。"}
+            {result.estimate.quantityAtoms < atoms && " 当前深度仅能部分平仓。"}
             {closing &&
               " 净盈亏已扣本次平仓费，不重复计入已结算的开仓费或资金费。"}
           </p>
@@ -583,7 +712,9 @@ export function TradeForm({
       </section>
       <p className="text-xs text-muted-foreground">
         {mode === "market"
-          ? "按受理后的新鲜盘口模拟成交。"
+          ? closing
+            ? "按受理后的订单簿逐档成交，深度不足时可部分平仓。"
+            : "按受理后的订单簿逐档成交，滑点范围内不足全额时拒单。"
           : mode === "limit"
             ? "买入不高于限价、卖出不低于限价时按盘口模拟成交。"
             : "以标记价格触发，触发后按" +
@@ -600,6 +731,9 @@ export function TradeForm({
           确认{modes[intent.terms.kind]} · {orderLabel[intent.action]}{" "}
           {coin(intent.quantityAtoms)} {unit}
           {intent.leverage ? " · " + intent.leverage + "×" : ""}
+          {intent.slippageBps
+            ? " · 滑点上限 " + intent.slippageBps / 100 + "%"
+            : ""}
           {"triggerPriceUnits" in intent.terms
             ? " · 标记价" +
               (intent.terms.triggerDirection === "above" ? " ≥ " : " ≤ ") +
@@ -614,7 +748,7 @@ export function TradeForm({
       <div className="mt-4 flex flex-wrap gap-2">
         <button
           className={button}
-          disabled={!!problem || busy}
+          disabled={!!problem || busy || calculating}
           aria-describedby={
             visibleProblem
               ? blockedReasonId

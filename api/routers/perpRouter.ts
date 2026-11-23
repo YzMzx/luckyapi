@@ -22,12 +22,16 @@ import {
   PerpExchangeQuoteChanged,
   placePerpOrder,
   previewPerpExchangeForUser,
+  previewPerpMargin,
+  addPerpMargin,
 } from "../perp/engine";
 import {
   getPerpMarket,
   getPerpQuoteStatus,
   getPerpInstrument,
+  getPerpOrderBook,
 } from "../perp/market";
+import { previewPerpDepth } from "../perp/depth";
 import {
   createPending,
   cancelPending,
@@ -48,11 +52,14 @@ const exchangeInput = z.object({
   amountUnits: units,
 });
 
+const marginInput = z.object({ symbol, openedAt: units, amountUnits: units });
+
 const baseOrder = z.object({
   symbol,
   action: z.enum(["openLong", "openShort", "close"]),
   quantityAtoms: units,
   leverage: perpLeverageSchema.optional(),
+  slippageBps: z.number().int().min(1).max(1000).optional(),
   requestKey,
 });
 const trigger = {
@@ -84,17 +91,20 @@ async function loadSnapshot(
     getPerpInstrument(db, ticker),
   ]);
   if (readOnlyReason) throw new PerpRuleError(readOnlyReason);
-  return q && i
-    ? {
-        ...q,
-        qtyStepAtoms: i.qtyStepUnits,
-        minQtyAtoms: i.minQtyUnits,
-        maxQtyAtoms: i.maxQtyUnits,
-        minNotionalUnits: i.minNotionalUnits,
-        maxLeverage: i.maxLeverage,
-        tickSizeUnits: i.tickSizeUnits,
-      }
-    : null;
+  if (!q || !i) return null;
+  const orderBook = await getPerpOrderBook(db, ticker, afterMs);
+  if (!orderBook)
+    throw new PerpRuleError("Bybit 订单簿深度过期或不可用，请重试");
+  return {
+    ...q,
+    qtyStepAtoms: i.qtyStepUnits,
+    minQtyAtoms: i.minQtyUnits,
+    maxQtyAtoms: i.maxQtyUnits,
+    minNotionalUnits: i.minNotionalUnits,
+    maxLeverage: i.maxLeverage,
+    tickSizeUnits: i.tickSizeUnits,
+    orderBook,
+  };
 }
 function assertWriteAccess(userId: number) {
   const db = getDb();
@@ -184,6 +194,94 @@ export const perpRouter = createRouter({
       const db = getDb().$client;
       return applyRule(() => exchangePerp(db, ctx.user.id, input));
     }),
+  previewMargin: memberQuery.input(marginInput).query(({ ctx, input }) =>
+    applyRule(async () => {
+      assertWriteAccess(ctx.user.id);
+      const db = getDb().$client;
+      const { quote, readOnlyReason } = await getPerpQuoteStatus(
+        db,
+        input.symbol,
+        Date.now()
+      );
+      if (readOnlyReason) throw new PerpRuleError(readOnlyReason);
+      return previewPerpMargin(db, ctx.user.id, input, quote);
+    })
+  ),
+  addMargin: memberQuery
+    .input(marginInput.extend({ requestKey }))
+    .mutation(({ ctx, input }) =>
+      applyRule(() => {
+        assertWriteAccess(ctx.user.id);
+        const db = getDb().$client;
+        return addPerpMargin(
+          db,
+          ctx.user.id,
+          input,
+          async (ticker, acceptedAt) => {
+            const { quote, readOnlyReason } = await getPerpQuoteStatus(
+              db,
+              ticker,
+              acceptedAt
+            );
+            if (readOnlyReason) throw new PerpRuleError(readOnlyReason);
+            return quote;
+          },
+          () => assertWriteAccess(ctx.user.id)
+        );
+      })
+    ),
+  previewDepth: memberQuery
+    .input(baseOrder.omit({ requestKey: true }))
+    .query(({ ctx, input }) =>
+      applyRule(async () => {
+        const db = getDb().$client;
+        const cfg = readPerpConfig(db);
+        const listed = cfg.symbols.find(item => item.symbol === input.symbol);
+        if (
+          !listed ||
+          (input.action !== "close" &&
+            (!cfg.tradingEnabled || !listed.openEnabled))
+        )
+          throw new PerpRuleError("合约未开放或已暂停开仓");
+        const p =
+          input.action === "close"
+            ? getPerpAccount(db, ctx.user.id).positions.find(
+                p => p.symbol === input.symbol
+              )
+            : null;
+        if (
+          input.action === "close" &&
+          (!p || input.quantityAtoms > p.quantityAtoms)
+        )
+          throw new PerpRuleError("可平仓数量不足");
+        const snapshot = await loadSnapshot(db, input.symbol);
+        if (!snapshot)
+          throw new PerpRuleError("Bybit 行情过期或不可用，请重试");
+        if (
+          input.quantityAtoms % snapshot.qtyStepAtoms !== 0 ||
+          input.quantityAtoms > snapshot.maxQtyAtoms
+        )
+          throw new PerpRuleError("数量不符合合约规格");
+        const depth = previewPerpDepth(db, snapshot.orderBook, {
+          side:
+            input.action === "openLong" || p?.side === "short" ? "buy" : "sell",
+          quantityAtoms: input.quantityAtoms,
+          qtyStepAtoms: snapshot.qtyStepAtoms,
+          slippageBps: input.slippageBps,
+        });
+        if (!depth)
+          throw new PerpRuleError("Bybit 订单簿深度过期或不可用，请重试");
+        const { quantityAtoms, notionalUnits, priceUnits, worstPriceUnits } =
+          depth;
+        return {
+          quantityAtoms,
+          notionalUnits,
+          priceUnits,
+          worstPriceUnits,
+          asOf: snapshot.orderBook.asOf,
+        };
+      })
+    ),
   placeOrder: memberQuery.input(baseOrder).mutation(({ ctx, input }) => {
     assertWriteAccess(ctx.user.id);
     const db = getDb().$client;

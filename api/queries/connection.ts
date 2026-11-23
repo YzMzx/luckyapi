@@ -3,7 +3,11 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as schema from "@db/schema";
-import { migratePerpLeverage, PERP_ENGINE_SCHEMA } from "../perp/schema";
+import {
+  migratePerpLeverage,
+  migratePerpMarginEvents,
+  PERP_ENGINE_SCHEMA,
+} from "../perp/schema";
 import { PERP_MARKET_SCHEMA } from "../perp/market";
 import { PERP_WEEKLY_SCHEMA } from "../perp/weekly";
 import { LEVEL_SCHEMA, migrateLevelColumns } from "./level-schema";
@@ -1106,7 +1110,8 @@ export function getDb() {
         sqlite.exec(PERP_ENGINE_SCHEMA);
         sqlite.exec(PERP_MARKET_SCHEMA);
         sqlite.exec(PERP_WEEKLY_SCHEMA);
-      })();
+        migratePerpMarginEvents(sqlite);
+      }).immediate();
       migratePerpLeverage(sqlite);
       migrate(sqlite);
       refundLegacyEscrows(sqlite);

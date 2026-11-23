@@ -62,6 +62,22 @@ it("adds ANTUSDT, runs a short, closes a close-only position, and archives tradi
     expect(url.origin).toBe("https://api.bybit.com");
     vi.setSystemTime(Date.now() + 50);
     const symbol = url.searchParams.get("symbol");
+    if (url.pathname.endsWith("/orderbook")) {
+      const ts = Date.now();
+      return Response.json({
+        retCode: 0,
+        time: ts,
+        result: {
+          s: symbol,
+          ts,
+          cts: ts,
+          u: ts,
+          seq: ts,
+          b: [[String(bid / 1000), "10"]],
+          a: [[String(ask / 1000), "10"]],
+        },
+      });
+    }
     if (url.pathname.endsWith("/kline")) {
       const ms = Number(url.searchParams.get("interval")) * 60_000;
       return Response.json({
@@ -249,6 +265,46 @@ it("adds ANTUSDT, runs a short, closes a close-only position, and archives tradi
   expect(await perps.account()).toMatchObject({
     availableCashUnits: 9_959_400,
     frozenCashUnits: 40_000,
+  });
+  const [position] = (await perps.account()).positions;
+  const topUp = {
+    symbol: open.symbol,
+    openedAt: position.openedAt,
+    amountUnits: 25_000,
+  };
+  await expect(otherPerps.previewMargin(topUp)).rejects.toMatchObject({
+    code: "BAD_REQUEST",
+  });
+  vi.setSystemTime(Date.now() + 350);
+  const preview = await perps.previewMargin(topUp);
+  expect(preview).toMatchObject({
+    previousMarginUnits: 40_000,
+    marginUnits: 65_000,
+    availableCashUnits: 9_934_400,
+  });
+  expect(preview.liquidationPriceUnits).toBeGreaterThan(
+    preview.previousLiquidationPriceUnits!
+  );
+  expect((await perps.account()).availableCashUnits).toBe(9_959_400);
+  const topUpRequest = { ...topUp, requestKey: randomUUID() };
+  vi.setSystemTime(Date.now() + 350);
+  expect(await perps.addMargin(topUpRequest)).toEqual(preview);
+  expect(await perps.addMargin(topUpRequest)).toEqual(preview);
+  await expect(
+    perps.addMargin({ ...topUpRequest, amountUnits: 1 })
+  ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  const topped = await perps.account();
+  expect(topped).toMatchObject({
+    availableCashUnits: 9_934_400,
+    frozenCashUnits: 65_000,
+    orders: [fill],
+  });
+  expect(topped.positions[0]).toMatchObject({
+    marginUnits: 65_000,
+    quantityAtoms: position.quantityAtoms,
+    entryNotionalUnits: position.entryNotionalUnits,
+    leverage: position.leverage,
+    liquidationPriceUnits: preview.liquidationPriceUnits,
   });
   await expect(
     settings.update({ ...ops, symbols: ["BTCUSDT", "ETHUSDT"] })

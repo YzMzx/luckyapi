@@ -1,0 +1,19 @@
+.perp-margin-dialog:modal {
+  overscroll-behavior: contain;
+  white-space: normal;
+}
+
+.perp-margin-dialog::backdrop {
+  background: rgb(0 0 0 / 65%);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+.perp-margin-dialog .perp-margin-amount {
+  font-size: 1rem;
+  min-block-size: 3rem;
+}
+
+.perp-margin-dialog .perp-margin-amount[aria-invalid="true"] {
+  border-color: #ffce68;
+}

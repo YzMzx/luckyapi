@@ -19,6 +19,18 @@ import {
   openLeverageProblem,
 } from "./config";
 
+import {
+  consumePerpDepth,
+  DEFAULT_PERP_SLIPPAGE_BPS,
+  isFreshPerpOrderBook,
+  observePerpDepth,
+  quoteObservedPerpDepth,
+  validPerpSlippageBps,
+  type PerpDepthFill,
+  type PerpOrderBook,
+} from "./depth";
+export type { PerpOrderBook, PerpOrderBookLevel } from "./depth";
+
 export class PerpRuleError extends Error {}
 export class PerpExchangeQuoteChanged extends PerpRuleError {}
 type Db = Database.Database;
@@ -31,15 +43,33 @@ export type PerpOrderInput = {
   quantityAtoms: number;
   leverage?: number;
   requestKey: string;
+  slippageBps?: number;
 };
-type Mark = {
+export type PerpMarginQuote = {
   symbol: string;
   asOf: number;
-  bidUnits: number;
-  askUnits: number;
   markUnits: number;
 };
-export type PerpSnapshot = Mark & {
+export type PerpMarginInput = {
+  symbol: string;
+  openedAt: number;
+  amountUnits: number;
+};
+export type PerpMarginResult = {
+  previousMarginUnits: number;
+  marginUnits: number;
+  previousLiquidationPriceUnits: number;
+  liquidationPriceUnits: number;
+  availableCashUnits: number;
+};
+type PerpMarginRequest = PerpMarginInput & { requestKey: string };
+type Mark = PerpMarginQuote & {
+  bidUnits: number;
+  askUnits: number;
+};
+type ExecutionMark = Mark & { orderBook?: PerpOrderBook };
+// Optional for callers passing valuation-only/legacy quotes. All trade fills fail closed without depth.
+export type PerpSnapshot = ExecutionMark & {
   qtyStepAtoms: number;
   minQtyAtoms: number;
   maxQtyAtoms?: number;
@@ -182,6 +212,17 @@ function pendingKey(db: Db, user: number, key: string) {
     )
     .get(user, key);
 }
+function marginByKey(db: Db, user: number, key: string) {
+  return db
+    .prepare<[number, string], PerpMarginInput & PerpMarginResult>(
+      `SELECT symbol,opened_at AS openedAt,amount_units AS amountUnits,
+         previous_margin_units AS previousMarginUnits,margin_units AS marginUnits,
+         previous_liquidation_price_units AS previousLiquidationPriceUnits,
+         liquidation_price_units AS liquidationPriceUnits,available_cash_units AS availableCashUnits
+       FROM perp_margin_additions WHERE user_id=? AND request_key=?`
+    )
+    .get(user, key);
+}
 function conflict(): never {
   return fail("请求键已用于不同参数");
 }
@@ -310,7 +351,8 @@ export function exchangePerp(
       }
       if (
         orderByKey(db, user, input.requestKey) ||
-        pendingKey(db, user, input.requestKey)
+        pendingKey(db, user, input.requestKey) ||
+        marginByKey(db, user, input.requestKey)
       )
         conflict();
       const now = Date.now(),
@@ -405,22 +447,20 @@ function getPosition(db: Db, user: number, symbol: string) {
     )
     .get(user, symbol) as Position | undefined;
 }
-export function describePosition(p: Position) {
+function liquidationPrice(p: Position) {
   const buy = p.side === "long";
-  const equityBase = BigInt(
-    buy
-      ? p.entryNotionalUnits - p.marginUnits
-      : integer(p.entryNotionalUnits + p.marginUnits)
-  );
+  const equityBase =
+    BigInt(p.entryNotionalUnits) + BigInt(p.marginUnits) * (buy ? -1n : 1n);
   const denominator = BigInt(p.quantityAtoms) * (buy ? BPS - MM : BPS + MM);
-  const liquidationPriceUnits =
-    equityBase <= 0n ? 0 : num((equityBase * SCALE * BPS) / denominator);
+  return equityBase <= 0n ? 0 : num((equityBase * SCALE * BPS) / denominator);
+}
+export function describePosition(p: Position) {
   return {
     ...p,
     entryPriceUnits: num(
       (BigInt(p.entryNotionalUnits) * SCALE) / BigInt(p.quantityAtoms)
     ),
-    liquidationPriceUnits,
+    liquidationPriceUnits: liquidationPrice(p),
   };
 }
 export function getPerpAccount(db: Db, user: number) {
@@ -445,7 +485,10 @@ export function getPerpAccount(db: Db, user: number) {
             " FROM perp_positions WHERE user_id=? ORDER BY symbol"
         )
         .all(user) as Position[]
-    ).map(describePosition);
+    ).map(p => ({
+      ...describePosition(p),
+      liquidationTriggeredAt: readLiquidationLock(db, p) ?? null,
+    }));
     const orders = db
       .prepare(
         "SELECT " +
@@ -486,6 +529,9 @@ export function getPerpAccount(db: Db, user: number) {
 }
 function writePosition(db: Db, p: Position) {
   if (p.quantityAtoms === 0) {
+    db.prepare(
+      "DELETE FROM perp_liquidation_locks WHERE user_id=? AND symbol=?"
+    ).run(p.userId, p.symbol);
     db.prepare("DELETE FROM perp_positions WHERE user_id=? AND symbol=?").run(
       p.userId,
       p.symbol
@@ -536,18 +582,36 @@ function recordOrder(
 function replay(db: Db, user: number, input: PerpOrderInput) {
   if (
     exchangeByKey(db, user, input.requestKey) ||
-    pendingKey(db, user, input.requestKey)
+    pendingKey(db, user, input.requestKey) ||
+    marginByKey(db, user, input.requestKey)
   )
     conflict();
   const old = orderByKey(db, user, input.requestKey);
+  if (!old) return;
+  const request = db
+    .prepare<
+      [number],
+      {
+        action: Action | null;
+        quantityAtoms: number | null;
+        leverage: number | null;
+        slippageBps: number | null;
+      }
+    >(
+      "SELECT requested_action AS action,requested_quantity_atoms AS quantityAtoms,requested_leverage AS leverage,slippage_bps AS slippageBps FROM perp_order_execution WHERE order_id=?"
+    )
+    .get(old.id);
   if (
-    old &&
-    (old.symbol !== input.symbol ||
-      old.action !== input.action ||
-      old.quantityAtoms !== input.quantityAtoms ||
-      (input.action !== "close" && old.leverage !== (input.leverage ?? 1)))
+    old.symbol !== input.symbol ||
+    (request?.action ?? old.action) !== input.action ||
+    (request?.quantityAtoms ?? old.quantityAtoms) !== input.quantityAtoms ||
+    (input.action !== "close" &&
+      (request?.leverage ?? old.leverage) !== (input.leverage ?? 1)) ||
+    (request?.slippageBps ?? DEFAULT_PERP_SLIPPAGE_BPS) !==
+      (input.slippageBps ?? DEFAULT_PERP_SLIPPAGE_BPS)
   )
     conflict();
+  if (old.action === "liquidate") fail("仓位已触发逐仓强平");
   return old;
 }
 export function isFresh(q: Mark) {
@@ -573,17 +637,27 @@ function closePosition(
   db: Db,
   p: Position,
   q: Mark,
-  quantity: number,
+  execution: {
+    quantityAtoms: number;
+    priceUnits: number;
+    notionalUnits: number;
+  },
   action: "close" | "liquidate",
   key: string | null
 ) {
+  const {
+    quantityAtoms: quantity,
+    priceUnits: price,
+    notionalUnits: value,
+  } = execution;
   const size = BigInt(quantity),
-    total = BigInt(p.quantityAtoms),
-    price = p.side === "long" ? q.bidUnits : q.askUnits;
+    total = BigInt(p.quantityAtoms);
   const entry = num((BigInt(p.entryNotionalUnits) * size) / total),
     released = num((BigInt(p.marginUnits) * size) / total);
-  const value = notional(quantity, price),
-    gross = integer(sign(p.side) * (value - entry), Number.MIN_SAFE_INTEGER);
+  const gross = integer(
+    sign(p.side) * (value - entry),
+    Number.MIN_SAFE_INTEGER
+  );
   // A gap can exhaust the isolated position. Never draw on other positions or free wallet cash.
   const equity = Math.max(
     0,
@@ -631,36 +705,331 @@ function closePosition(
     createdAt: q.asOf,
   });
 }
-// Internal execution primitive. Caller owns the immediate transaction and quote validation.
+function recordExecution(
+  db: Db,
+  receipt: Receipt,
+  value: number,
+  book: PerpOrderBook,
+  request?: PerpOrderInput
+) {
+  db.prepare(
+    "INSERT INTO perp_order_execution(order_id,notional_units,book_sequence,book_as_of,requested_quantity_atoms,requested_action,requested_leverage,slippage_bps) VALUES(?,?,?,?,?,?,?,?)"
+  ).run(
+    receipt.id,
+    value,
+    book.sequence,
+    book.asOf,
+    request?.quantityAtoms ?? null,
+    request?.action ?? null,
+    request?.leverage ?? null,
+    request ? (request.slippageBps ?? DEFAULT_PERP_SLIPPAGE_BPS) : null
+  );
+  return receipt;
+}
+
+function closingSide(p: Position) {
+  return p.side === "long" ? "sell" : "buy";
+}
+function readLiquidationLock(db: Db, p: Position) {
+  return db
+    .prepare<[number, string], number>(
+      "SELECT triggered_at FROM perp_liquidation_locks WHERE user_id=? AND symbol=?"
+    )
+    .pluck()
+    .get(p.userId, p.symbol);
+}
+function liquidationLocked(
+  db: Db,
+  p: Position,
+  q: Pick<Mark, "asOf" | "markUnits">
+) {
+  const lock = readLiquidationLock(db, p);
+  if (lock !== undefined) return lock;
+  if (maintenanceBreached(p, q.markUnits)) {
+    db.prepare(
+      "INSERT INTO perp_liquidation_locks(user_id,symbol,triggered_at,mark_units) VALUES(?,?,?,?)"
+    ).run(p.userId, p.symbol, q.asOf, q.markUnits);
+    return q.asOf;
+  }
+}
+function validateMarginInput(user: number, input: PerpMarginInput) {
+  integer(user, 1);
+  if (!perpSymbolSchema.safeParse(input.symbol).success) fail("无效合约");
+  integer(input.openedAt, 1);
+  integer(input.amountUnits, 1);
+}
+
+function replayMargin(db: Db, user: number, input: PerpMarginRequest) {
+  const row = marginByKey(db, user, input.requestKey);
+  if (row) {
+    const { symbol, openedAt, amountUnits, ...result } = row;
+    if (
+      symbol !== input.symbol ||
+      openedAt !== input.openedAt ||
+      amountUnits !== input.amountUnits
+    )
+      conflict();
+    return result;
+  }
+  if (
+    exchangeByKey(db, user, input.requestKey) ||
+    orderByKey(db, user, input.requestKey) ||
+    pendingKey(db, user, input.requestKey)
+  )
+    conflict();
+}
+
+export function findPerpMarginReplay(
+  db: Db,
+  user: number,
+  input: PerpMarginRequest
+): PerpMarginResult | undefined {
+  validateMarginInput(user, input);
+  validKey(input.requestKey);
+  return db.transaction(() => replayMargin(db, user, input))();
+}
+
+function marginQuote(
+  quote: PerpMarginQuote | null,
+  symbol: string,
+  now: number,
+  acceptedAt?: number
+) {
+  if (
+    !quote ||
+    quote.symbol !== symbol ||
+    !Number.isSafeInteger(quote.asOf) ||
+    quote.asOf <= 0 ||
+    quote.asOf > now ||
+    now - quote.asOf >= 5000 ||
+    !Number.isSafeInteger(quote.markUnits) ||
+    quote.markUnits <= 0 ||
+    (acceptedAt !== undefined &&
+      (quote.asOf <= acceptedAt || now - acceptedAt >= 5000))
+  )
+    fail("Bybit 实时报价过期或不可用，请重试");
+  return quote;
+}
+
+const MARGIN_LIQUIDATION_ERROR = "仓位已触发逐仓强平，无法追加保证金";
+
+function marginPosition(
+  db: Db,
+  user: number,
+  input: PerpMarginInput,
+  quote: PerpMarginQuote,
+  now: number
+) {
+  const p = getPosition(db, user, input.symbol);
+  if (!p || p.openedAt !== input.openedAt) fail("仓位不存在或已变更，请刷新");
+  if (readLiquidationLock(db, p) !== undefined) fail(MARGIN_LIQUIDATION_ERROR);
+  if (quote.asOf < p.updatedAt) fail("报价早于仓位最新变动");
+  // A fresh ticker taken before a boundary is still unusable after the
+  // boundary, until the position's authoritative funding has been applied.
+  if (p.nextFundingAt <= now) fail("该仓位资金费待确认，请稍后重试");
+  return p;
+}
+
+function marginResult(
+  db: Db,
+  p: Position,
+  amountUnits: number
+): PerpMarginResult {
+  const available = cash(db, p.userId);
+  if (available < amountUnits) fail("可用模拟金不足");
+  const marginUnits = integer(p.marginUnits + amountUnits);
+  return {
+    previousMarginUnits: p.marginUnits,
+    marginUnits,
+    previousLiquidationPriceUnits: liquidationPrice(p),
+    liquidationPriceUnits: liquidationPrice({ ...p, marginUnits }),
+    availableCashUnits: available - amountUnits,
+  };
+}
+
+export function previewPerpMargin(
+  db: Db,
+  user: number,
+  input: PerpMarginInput,
+  quote: PerpMarginQuote | null
+): PerpMarginResult {
+  validateMarginInput(user, input);
+  return db.transaction(() => {
+    const now = Date.now();
+    const q = marginQuote(quote, input.symbol, now);
+    const p = marginPosition(db, user, input, q, now);
+    if (maintenanceBreached(p, q.markUnits)) fail(MARGIN_LIQUIDATION_ERROR);
+    return marginResult(db, p, input.amountUnits);
+  })();
+}
+
+export async function addPerpMargin(
+  db: Db,
+  user: number,
+  input: PerpMarginRequest,
+  loadQuote: (
+    symbol: string,
+    acceptedAt: number
+  ) => PerpMarginQuote | null | PromiseLike<PerpMarginQuote | null>,
+  assertWriteAccess?: () => void
+): Promise<PerpMarginResult> {
+  const request = { ...input };
+  const existing = findPerpMarginReplay(db, user, request);
+  if (existing) return existing;
+
+  const acceptedAt = Date.now();
+  let loaded: { quote: PerpMarginQuote | null } | { error: unknown };
+  try {
+    loaded = { quote: await loadQuote(request.symbol, acceptedAt) };
+  } catch (error) {
+    loaded = { error };
+  }
+  const result = db
+    .transaction(() => {
+      const prior = replayMargin(db, user, request);
+      if (prior) return prior;
+      if ("error" in loaded) throw loaded.error;
+      assertWriteAccess?.();
+      const now = Date.now();
+      const q = marginQuote(loaded.quote, request.symbol, now, acceptedAt);
+      const p = marginPosition(db, user, request, q, now);
+      if (liquidationLocked(db, p, q) !== undefined) {
+        // Commit the observed breach without changing cash, position or event
+        // history. Throwing inside the transaction would roll the lock back.
+        return { liquidated: true } as const;
+      }
+      const value = marginResult(db, p, request.amountUnits);
+      changeCash(db, user, -request.amountUnits);
+      db.prepare(
+        "UPDATE perp_positions SET margin_units=?,updated_at=? WHERE user_id=? AND symbol=?"
+      ).run(value.marginUnits, now, user, request.symbol);
+      addEvent(
+        db,
+        user,
+        request.symbol,
+        "margin",
+        now,
+        -request.amountUnits,
+        request.amountUnits
+      );
+      db.prepare(
+        `INSERT INTO perp_margin_additions(user_id,request_key,symbol,opened_at,amount_units,
+          previous_margin_units,margin_units,previous_liquidation_price_units,liquidation_price_units,available_cash_units,created_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?)`
+      ).run(
+        user,
+        request.requestKey,
+        request.symbol,
+        request.openedAt,
+        request.amountUnits,
+        value.previousMarginUnits,
+        value.marginUnits,
+        value.previousLiquidationPriceUnits,
+        value.liquidationPriceUnits,
+        value.availableCashUnits,
+        now
+      );
+      return value;
+    })
+    .immediate();
+  if ("liquidated" in result) fail(MARGIN_LIQUIDATION_ERROR);
+  return result;
+}
+
+function liquidationDepth(
+  db: Db,
+  p: Position,
+  q: Mark,
+  book: PerpOrderBook,
+  triggeredAt: number,
+  input?: PerpOrderInput
+) {
+  if (book.asOf < Math.max(triggeredAt, p.updatedAt)) return;
+  const side = closingSide(p);
+  // This is forced risk reduction, not a discretionary market order. Never
+  // fabricate liquidity: lock and wait when the whole position cannot execute.
+  const fill = quoteObservedPerpDepth(
+    db,
+    book,
+    { side, quantityAtoms: p.quantityAtoms },
+    true
+  );
+  if (!fullDepth(fill, p.quantityAtoms)) return;
+  const r = closePosition(
+    db,
+    p,
+    { ...q, asOf: Math.max(q.asOf, book.asOf) },
+    fill,
+    "liquidate",
+    input?.requestKey ?? null
+  );
+  consumePerpDepth(db, p.symbol, side, fill);
+  return recordExecution(db, r, fill.notionalUnits, book, input);
+}
+function fullDepth(
+  fill: PerpDepthFill | null,
+  quantityAtoms: number
+): fill is PerpDepthFill & { priceUnits: number } {
+  return (
+    !!fill && fill.priceUnits !== null && fill.quantityAtoms === quantityAtoms
+  );
+}
+type FillResult =
+  { order: Receipt } | { liquidated: Receipt } | { waiting: string };
+
+// Caller observes this validated book and owns the immediate transaction.
 export function fillOrder(
   db: Db,
   user: number,
   input: PerpOrderInput,
-  q: PerpSnapshot
-) {
+  q: PerpSnapshot & { orderBook: PerpOrderBook },
+  pending?: { limitPriceUnits?: number }
+): FillResult {
   const p = getPosition(db, user, input.symbol),
-    qty = input.quantityAtoms;
-  if (p && p.nextFundingAt <= q.asOf) fail("该仓位资金费待确认，请稍后重试");
-  if (p && q.asOf < p.updatedAt) fail("报价早于仓位最新变动");
-  if (p && maintenanceBreached(p, q.markUnits))
-    return {
-      liquidated: closePosition(
-        db,
-        p,
-        q,
-        p.quantityAtoms,
-        "liquidate",
-        input.requestKey
-      ),
-    };
+    qty = input.quantityAtoms,
+    book = q.orderBook;
+  const executionQuote = { ...q, asOf: Math.max(q.asOf, book.asOf) };
+  if (p && p.nextFundingAt <= executionQuote.asOf)
+    fail("该仓位资金费待确认，请稍后重试");
+  if (p && q.asOf < p.updatedAt) return { waiting: "报价早于仓位最新变动" };
+  if (p) {
+    const lockedAt = liquidationLocked(db, p, q);
+    if (lockedAt !== undefined) {
+      const liquidated = liquidationDepth(db, p, q, book, lockedAt, input);
+      return liquidated
+        ? { liquidated }
+        : { waiting: "仓位已触发逐仓强平，等待足量订单簿深度" };
+    }
+    if (book.asOf < p.updatedAt) return { waiting: "订单簿早于仓位最新变动" };
+  }
+  const qtyStepAtoms = integer(q.qtyStepAtoms, 1);
   if (
-    qty % integer(q.qtyStepAtoms, 1) !== 0 ||
+    qty % qtyStepAtoms !== 0 ||
     qty > (q.maxQtyAtoms ?? Number.MAX_SAFE_INTEGER)
   )
     fail("下单数量不符合合约步长或单笔上限");
+  const options = {
+    quantityAtoms: qty,
+    qtyStepAtoms,
+    slippageBps: input.slippageBps,
+    limitPriceUnits: pending?.limitPriceUnits,
+  };
   if (input.action === "close") {
     if (!p || qty > p.quantityAtoms) fail("可平仓数量不足");
-    return { order: closePosition(db, p, q, qty, "close", input.requestKey) };
+    const side = closingSide(p);
+    const fill = quoteObservedPerpDepth(db, book, { side, ...options });
+    if (!fill || fill.priceUnits === null || (pending && !fullDepth(fill, qty)))
+      return { waiting: "订单簿深度不足或超过滑点上限" };
+    const r = closePosition(
+      db,
+      p,
+      executionQuote,
+      { ...fill, priceUnits: fill.priceUnits },
+      "close",
+      input.requestKey
+    );
+    consumePerpDepth(db, p.symbol, side, fill);
+    return { order: recordExecution(db, r, fill.notionalUnits, book, input) };
   }
   const cfg = readPerpConfig(db);
   if (
@@ -674,8 +1043,14 @@ export function fillOrder(
   if (leverageProblem) fail(leverageProblem);
   if (p && (p.side !== side || p.leverage !== leverage))
     fail("请先平仓再切换方向或杠杆");
-  const price = side === "long" ? q.askUnits : q.bidUnits,
-    value = notional(qty, price);
+  const direction = side === "long" ? "buy" : "sell";
+  const fill = quoteObservedPerpDepth(db, book, {
+    side: direction,
+    ...options,
+  });
+  if (!fullDepth(fill, qty))
+    return { waiting: "订单簿深度不足或超过滑点上限，无法全量开仓" };
+  const { priceUnits: price, notionalUnits: value } = fill;
   if (
     qty < integer(q.minQtyAtoms, 1) ||
     value < Math.max(1, integer(q.minNotionalUnits))
@@ -704,8 +1079,8 @@ export function fillOrder(
     entryNotionalUnits: entry,
     quantityAtoms: integer((p?.quantityAtoms ?? 0) + qty),
     marginUnits: integer((p?.marginUnits ?? 0) + margin),
-    openedAt: p?.openedAt ?? q.asOf,
-    updatedAt: q.asOf,
+    openedAt: p?.openedAt ?? executionQuote.asOf,
+    updatedAt: executionQuote.asOf,
     nextFundingAt: p?.nextFundingAt ?? q.nextFundingAt,
   } satisfies Position;
   if (maintenanceBreached(next, q.markUnits))
@@ -717,26 +1092,26 @@ export function fillOrder(
     user,
     q.symbol,
     "open",
-    q.asOf,
+    executionQuote.asOf,
     -debit,
     margin,
     sign(side) * value,
     sign(side) * qty
   );
-  return {
-    order: recordOrder(db, user, input.requestKey, {
-      symbol: q.symbol,
-      action: input.action,
-      side,
-      leverage,
-      quantityAtoms: qty,
-      priceUnits: price,
-      markUnits: q.markUnits,
-      pnlUnits: 0,
-      feeUnits: fee,
-      createdAt: q.asOf,
-    }),
-  };
+  const receipt = recordOrder(db, user, input.requestKey, {
+    symbol: q.symbol,
+    action: input.action,
+    side,
+    leverage,
+    quantityAtoms: qty,
+    priceUnits: price,
+    markUnits: q.markUnits,
+    pnlUnits: 0,
+    feeUnits: fee,
+    createdAt: executionQuote.asOf,
+  });
+  consumePerpDepth(db, q.symbol, direction, fill);
+  return { order: recordExecution(db, receipt, value, book, input) };
 }
 export async function placePerpOrder(
   db: Db,
@@ -758,6 +1133,11 @@ export async function placePerpOrder(
       : !isValidPerpLeverage(input.leverage ?? 1)
   )
     fail("无效的杠杆参数");
+  if (
+    input.slippageBps !== undefined &&
+    !validPerpSlippageBps(input.slippageBps)
+  )
+    fail("滑点上限须为 1 至 1000 bps");
   const existing = replay(db, user, input);
   if (existing) return existing;
   // Never query Bybit on behalf of a member for an unlisted contract.
@@ -792,29 +1172,56 @@ export async function placePerpOrder(
         q.nextFundingAt <= q.asOf
       )
         fail("Bybit 实时报价过期或不可用，请重试");
-      return fillOrder(db, user, input, q);
+      const book = q.orderBook;
+      if (
+        !isFreshPerpOrderBook(book, input.symbol) ||
+        book.asOf <= accepted ||
+        q.nextFundingAt <= book.asOf
+      )
+        fail("Bybit 实时订单簿过期或不可用，请重试");
+      if (!observePerpDepth(db, book)) fail("订单簿快照已过时，请重试");
+      const snapshot = { ...q, orderBook: book };
+      // A valid newer snapshot supersedes old liquidity even if this request fails
+      // a business check. The cursor commits, the fill savepoint does not.
+      try {
+        return db.transaction(() => fillOrder(db, user, input, snapshot))();
+      } catch (error) {
+        if (error instanceof PerpRuleError) return { error };
+        throw error;
+      }
     })
     .immediate();
-  if (!result.order) fail("仓位已触发逐仓强平");
+  if ("error" in result) throw result.error;
+  if ("waiting" in result) fail(result.waiting);
+  if ("liquidated" in result) fail("仓位已触发逐仓强平");
   return result.order;
 }
-export function liquidatePerpPositions(db: Db, q: Mark) {
+export function liquidatePerpPositions(db: Db, q: ExecutionMark) {
   if (!isFresh(q)) return 0;
   return db
     .transaction(() => {
+      const book =
+        isFreshPerpOrderBook(q.orderBook, q.symbol) &&
+        observePerpDepth(db, q.orderBook)
+          ? q.orderBook
+          : undefined;
       const rows = db
         .prepare(
           "SELECT " +
             POSITION +
-            " FROM perp_positions WHERE symbol=? AND updated_at<=? AND next_funding_at>?"
+            " FROM perp_positions WHERE symbol=? AND updated_at<=? AND next_funding_at>? ORDER BY user_id"
         )
         .all(q.symbol, q.asOf, q.asOf) as Position[];
       let count = 0;
       for (const p of rows) {
-        if (maintenanceBreached(p, q.markUnits)) {
-          closePosition(db, p, q, p.quantityAtoms, "liquidate", null);
+        const lockedAt = liquidationLocked(db, p, q);
+        if (
+          lockedAt !== undefined &&
+          book &&
+          book.asOf < p.nextFundingAt &&
+          liquidationDepth(db, p, q, book, lockedAt)
+        )
           count++;
-        }
       }
       return count;
     })
@@ -858,22 +1265,9 @@ export function applyPerpFunding(
         };
         writePosition(db, next);
         addEvent(db, p.userId, symbol, "funding", f.asOf, 0, delta);
-        // Historical funding mark is an exact boundary valuation, including after a restart.
-        if (maintenanceBreached(next, f.markUnits))
-          closePosition(
-            db,
-            next,
-            {
-              symbol,
-              bidUnits: f.markUnits,
-              askUnits: f.markUnits,
-              markUnits: f.markUnits,
-              asOf: f.asOf,
-            },
-            p.quantityAtoms,
-            "liquidate",
-            null
-          );
+        // Assess isolated risk at the official historical funding mark, but never
+        // invent a historical fill. The lock waits for a real, live full book.
+        liquidationLocked(db, next, { asOf: f.asOf, markUnits: f.markUnits });
       }
       return rows.length;
     })

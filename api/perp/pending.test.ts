@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PERP_ENGINE_SCHEMA } from "./schema";
+import { withTestDepth } from "./depth-fixture";
 import { exchangePerp, placePerpOrder } from "./engine";
 import {
   createPending,
@@ -32,7 +33,7 @@ function quote(
   markUnits = 100000,
   extra: Partial<PendingSnapshot> = {}
 ): PendingSnapshot {
-  return {
+  const q = {
     symbol,
     bidUnits,
     askUnits,
@@ -46,6 +47,10 @@ function quote(
     minNotionalUnits: 10_000,
     maxLeverage: 10,
     ...extra,
+  };
+  return {
+    ...withTestDepth(q),
+    ...("orderBook" in extra ? { orderBook: extra.orderBook } : {}),
   };
 }
 function advance() {
@@ -200,6 +205,7 @@ describe("durable simulated pending orders", () => {
       status: "rejected",
     });
     expect(listPending(db, 2)).toEqual([]);
+    advance();
     const s = createPending(db, 2, order(), quote());
     expect(cancelPending(db, 2, s.id).status).toBe("cancelled");
     advance();
@@ -306,4 +312,149 @@ describe("durable simulated pending orders", () => {
       0
     );
   });
+});
+
+function finiteQuote(
+  bids: [number, number][],
+  asks: [number, number][],
+  mark = 100_000
+) {
+  const levels = (rows: [number, number][]) =>
+    rows.map(([priceUnits, quantityAtoms]) => ({ priceUnits, quantityAtoms }));
+  const q = quote(bids[0]![0], asks[0]![0], mark);
+  return {
+    ...q,
+    orderBook: {
+      symbol,
+      asOf: Date.now(),
+      sequence: Date.now(),
+      bids: levels(bids),
+      asks: levels(asks),
+    },
+  };
+}
+
+it("keeps a limit order waiting on partial depth and never consumes a beyond-limit level", () => {
+  const q = quantityAtoms;
+  const input = order({ limitPriceUnits: 100_000 });
+  const pending = createPending(db, 1, input, quote());
+  advance();
+  const tooThin = finiteQuote(
+    [[99_800, q]],
+    [
+      [99_900, q / 2],
+      [100_100, q],
+    ]
+  );
+  expect(match(pending.id, tooThin)).toMatchObject({
+    status: "pending",
+    fillOrderId: null,
+  });
+  expect(
+    db.prepare("SELECT count(*) FROM perp_depth_consumption").pluck().get()
+  ).toBe(0);
+  expect(
+    db
+      .prepare("SELECT cash_units FROM perp_wallets WHERE user_id=1")
+      .pluck()
+      .get()
+  ).toBe(100000);
+  advance();
+  const full = finiteQuote(
+    [[99_800, q]],
+    [
+      [99_900, q / 2],
+      [100_000, q / 2],
+      [100_100, q],
+    ]
+  );
+  expect(match(pending.id, full)).toMatchObject({ status: "filled" });
+  expect(db.prepare("SELECT price_units FROM perp_orders").pluck().get()).toBe(
+    99_950
+  );
+  expect(
+    db
+      .prepare(
+        "SELECT price_units FROM perp_depth_consumption ORDER BY price_units"
+      )
+      .pluck()
+      .all()
+  ).toEqual([99_900, 100_000]);
+});
+
+it("keeps a conditional market activated while it waits for full guarded depth", () => {
+  const q = quantityAtoms;
+  const i = order({
+    orderType: "conditional",
+    triggerDirection: "above",
+    triggerPriceUnits: 101_000,
+    limitPriceUnits: undefined,
+    slippageBps: 60,
+  });
+  const pending = createPending(db, 1, i, quote());
+  expect(() => replayPending(db, 1, { ...i, slippageBps: 50 })).toThrow(
+    "请求键"
+  );
+  advance();
+  const old = finiteQuote(
+    [[99_900, q]],
+    [
+      [100_000, q / 2],
+      [100_601, q],
+    ],
+    101_100
+  );
+  expect(match(pending.id, { ...old, orderBook: undefined })).toMatchObject({
+    status: "triggered",
+    triggeredAt: old.asOf,
+  });
+  expect(match(pending.id, old)).toMatchObject({ status: "triggered" });
+  expect(db.prepare("SELECT count(*) FROM perp_orders").pluck().get()).toBe(0);
+  advance();
+  const newer = finiteQuote(
+    [[99_900, q]],
+    [
+      [100_000, q / 2],
+      [100_600, q],
+    ],
+    100_000
+  );
+  expect(match(pending.id, newer)).toMatchObject({ status: "filled" });
+  expect(db.prepare("SELECT price_units FROM perp_orders").pluck().get()).toBe(
+    100_300
+  );
+});
+
+it("uses shared liquidity for standing orders and rejects missing or old pending books", () => {
+  const q = quantityAtoms;
+  const i = order({ limitPriceUnits: 100_000 });
+  expect(() =>
+    createPending(
+      db,
+      1,
+      i,
+      quote(99_900, 100_000, 100_000, { orderBook: undefined })
+    )
+  ).toThrow("订单簿");
+  const first = createPending(db, 1, i, quote());
+  const second = createPending(
+    db,
+    2,
+    { ...i, requestKey: randomUUID() },
+    quote()
+  );
+  advance();
+  const shared = finiteQuote([[99_900, q]], [[100_000, q]]);
+  expect(match(first.id, { ...shared, orderBook: undefined })).toMatchObject({
+    status: "pending",
+  });
+  expect(match(first.id, shared)).toMatchObject({ status: "filled" });
+  expect(match(second.id, shared)).toMatchObject({ status: "pending" });
+  advance();
+  expect(match(second.id, { ...shared, asOf: Date.now() })).toMatchObject({
+    status: "pending",
+  });
+  expect(
+    match(second.id, finiteQuote([[99_900, q]], [[100_000, q]]))
+  ).toMatchObject({ status: "filled" });
 });
