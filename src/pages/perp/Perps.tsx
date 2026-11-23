@@ -21,7 +21,6 @@ import {
   credit,
   input,
   panel,
-  signed,
   sim,
   stamp,
   rate,
@@ -31,6 +30,7 @@ import {
   orderLabel,
 } from "./format";
 import { Table } from "./shared";
+import { PnlAmount } from "./PnlAmount";
 import "./PositionCloseDialog.css";
 import { formatExchange } from "./exchangeReview";
 
@@ -79,7 +79,9 @@ function PositionRow({
       <td>{sim(p.entryPriceUnits)}</td>
       <td>{quote ? sim(quote.markUnits) : "—"}</td>
       <td>{p.liquidationPriceUnits ? sim(p.liquidationPriceUnits) : "—"}</td>
-      <td>{pnl !== null ? signed(pnl) : "待估值"}</td>
+      <td>
+        <PnlAmount units={pnl} />
+      </td>
       <td>
         <button
           type="button"
@@ -172,7 +174,9 @@ function Records({ account }: { account: Account }) {
                 <td>{coin(o.quantityAtoms)}</td>
                 <td>{sim(o.priceUnits)}</td>
                 <td>{sim(o.feeUnits)}</td>
-                <td>{signed(o.pnlUnits)}</td>
+                <td>
+                  <PnlAmount units={o.pnlUnits} />
+                </td>
               </tr>
             ))}
           </Table>
@@ -199,7 +203,9 @@ function Records({ account }: { account: Account }) {
                 <td>{f.symbol}</td>
                 <td>{sim(f.markUnits)}</td>
                 <td>{rate(f.rateE8)}</td>
-                <td>{signed(f.amountUnits)}</td>
+                <td>
+                  <PnlAmount units={f.amountUnits} />
+                </td>
               </tr>
             ))}
           </Table>
@@ -299,8 +305,13 @@ export default function Perps() {
             <Link className={button} to="/contracts/square">
               持仓广场 →
             </Link>
-            <Link className={button} to="/contracts/live">实时盈亏榜 →</Link>
-            <Link className={button} to="/leaderboard?category=contracts&board=weekly">
+            <Link className={button} to="/contracts/live">
+              实时盈亏榜 →
+            </Link>
+            <Link
+              className={button}
+              to="/leaderboard?category=contracts&board=weekly"
+            >
               历史盈亏周榜 →
             </Link>
           </nav>

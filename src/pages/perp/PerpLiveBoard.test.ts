@@ -137,12 +137,12 @@ it("distinguishes incomplete valuations, flat positions and no open positions", 
     mine: { pnlUnits: null, rank: null, positionCount: 3 },
   });
   expect(pending).toContain("2 位玩家待估值，暂未列入榜单。");
-  expect(pending).toContain("<strong>待估值</strong>");
+  expect(pending).toContain('text-muted-foreground">待估值</span>');
   expect(pending).toContain("持仓 3 笔");
   expect(pending).not.toContain("0 模拟金");
 
   expect(
     render({ ...snapshot, mine: { pnlUnits: 0, rank: null, positionCount: 1 } })
-  ).toContain("0 模拟金（持平）");
+  ).toContain("0 模拟金</span>（持平）");
   expect(render(snapshot)).toContain("暂无未平仓合约。");
 });

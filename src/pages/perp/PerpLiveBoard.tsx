@@ -4,12 +4,10 @@ import { Pager } from "@/components/Pager";
 import { SiteNav } from "@/components/SiteNav";
 import { useMe } from "@/hooks/useMe";
 import { trpc } from "@/providers/trpc";
-import { button, panel, signed, stamp } from "./format";
+import { button, panel, stamp } from "./format";
+import { PnlAmount } from "./PnlAmount";
 import { Table } from "./shared";
 import { usePerpPresence } from "./usePerpPresence";
-
-const pnlColor = (units: number) =>
-  units > 0 ? "text-emerald-300" : units < 0 ? "text-rose-300" : "";
 
 export default function PerpLiveBoard() {
   const { user, isLoading } = useMe({
@@ -96,11 +94,13 @@ export default function PerpLiveBoard() {
                 {mine ? (
                   <p className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm tabular-nums">
                     {mine.pnlUnits === null ? (
-                      <strong>待估值</strong>
+                      <strong>
+                        <PnlAmount units={null} />
+                      </strong>
                     ) : (
                       <>
-                        <strong className={pnlColor(mine.pnlUnits)}>
-                          {signed(mine.pnlUnits)} 模拟金
+                        <strong>
+                          <PnlAmount units={mine.pnlUnits} showUnit />
                           {mine.pnlUnits === 0 && "（持平）"}
                         </strong>
                         {mine.rank !== null && <span>第 {mine.rank} 名</span>}
@@ -133,8 +133,8 @@ export default function PerpLiveBoard() {
                           {row.nickname}
                           {row.mine && "（我）"}
                         </th>
-                        <td className={pnlColor(row.pnlUnits)}>
-                          {signed(row.pnlUnits)}
+                        <td>
+                          <PnlAmount units={row.pnlUnits} />
                         </td>
                         <td>{row.positionCount}</td>
                       </tr>

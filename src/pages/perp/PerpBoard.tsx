@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Pager } from "@/components/Pager";
 import { usePerpPresence } from "./usePerpPresence";
 import { trpc } from "@/providers/trpc";
-import { button, day, input, panel, signed, stamp } from "./format";
+import { button, day, input, panel, stamp } from "./format";
+import { PnlAmount } from "./PnlAmount";
 import { Table } from "./shared";
 
 const weekBatch = 26;
@@ -113,7 +114,9 @@ export default function PerpBoard({ userId }: { userId: number }) {
                 我的当周成绩
                 {data.mine ? (
                   <>
-                    <strong>{signed(data.mine.pnlUnits)} 模拟金</strong>
+                    <strong>
+                      <PnlAmount units={data.mine.pnlUnits} showUnit />
+                    </strong>
                     {data.mine.rank != null
                       ? (data.mine.pnlUnits > 0 ? "盈利榜" : "亏损榜") +
                         "第 " +
@@ -137,7 +140,9 @@ export default function PerpBoard({ userId }: { userId: number }) {
                         {r.displayName}
                         {r.userId === userId ? "（我）" : ""}
                       </td>
-                      <td>{signed(r.pnlUnits)}</td>
+                      <td>
+                        <PnlAmount units={r.pnlUnits} />
+                      </td>
                     </tr>
                   ))}
                 </Table>

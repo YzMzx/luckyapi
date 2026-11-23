@@ -25,7 +25,6 @@ export const sim = (units: number) =>
   (units / 1_000).toLocaleString("zh-CN", { maximumFractionDigits: 3 });
 export const credit = (units: number) =>
   (units / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 6 });
-export const signed = (units: number) => (units > 0 ? "+" : "") + sim(units);
 const dateFormat = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai",
   year: "numeric",

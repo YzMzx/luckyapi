@@ -21,6 +21,7 @@ import { RankingBadge, RankingIdentity } from "@/components/RankingIdentity";
 import { trpc } from "@/providers/trpc";
 import { cn } from "@/lib/utils";
 import PerpBoard from "./perp/PerpBoard";
+import { PnlAmount } from "./perp/PnlAmount";
 
 const categoryIcons = {
   overall: Trophy,
@@ -48,8 +49,6 @@ type RankRow =
 
 function formatMetric(value: number, unit: string) {
   const safeValue = Number.isFinite(value) ? value : 0;
-  if (unit === "sim")
-    return `${safeValue.toLocaleString("zh-CN", { maximumFractionDigits: 3 })} 模拟金`;
   if (unit === "money")
     return `$${safeValue.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
   if (unit === "tokens")
@@ -61,15 +60,49 @@ function formatMetric(value: number, unit: string) {
   return Math.round(safeValue).toLocaleString("zh-CN");
 }
 
+type MetricBoard = Pick<
+  inferRouterOutputs<AppRouter>["rankings"]["query"]["board"],
+  "category" | "key" | "unit"
+>;
+
+function RankingMetric({
+  value,
+  board,
+  className,
+}: {
+  value: number;
+  board: MetricBoard;
+  className: string;
+}) {
+  const isLiquidationLoss =
+    board.category === "contracts" && board.key === "liquidation_loss";
+  if (board.unit === "sim") {
+    // API rankings use whole simulated USDT, while position records use milli-USDT.
+    const units = Math.round(
+      (isLiquidationLoss ? -Math.abs(value) : value) * 1000
+    );
+    return (
+      <p className={className}>
+        <PnlAmount units={units} showUnit />
+      </p>
+    );
+  }
+  return (
+    <p className={cn(className, "text-[#FFB700]")}>
+      {formatMetric(value, board.unit)}
+    </p>
+  );
+}
+
 function PodiumCard({
   row,
   place,
-  unit,
+  board,
   me,
 }: {
   row?: RankRow;
   place: number;
-  unit: string;
+  board: MetricBoard;
   me: number;
 }) {
   const height =
@@ -123,9 +156,11 @@ function PodiumCard({
             badge={row.badge}
             className="mt-3 items-center font-black text-[#fce1b6]"
           />
-          <p className="mt-1 font-num text-lg font-black text-[#FFB700]">
-            {formatMetric(row.metric, unit)}
-          </p>
+          <RankingMetric
+            className="mt-1 font-num text-lg font-black"
+            value={row.metric}
+            board={board}
+          />
           {row.userId === me && (
             <span className="mt-2 rounded-full bg-[#FFB700]/15 px-2 py-1 text-[10px] font-bold text-[#FFB700]">
               我的排名
@@ -381,19 +416,19 @@ export default function Rankings() {
                   <PodiumCard
                     row={podium[1]}
                     place={2}
-                    unit={ranking.data.board.unit}
+                    board={ranking.data.board}
                     me={user.id}
                   />
                   <PodiumCard
                     row={podium[0]}
                     place={1}
-                    unit={ranking.data.board.unit}
+                    board={ranking.data.board}
                     me={user.id}
                   />
                   <PodiumCard
                     row={podium[2]}
                     place={3}
-                    unit={ranking.data.board.unit}
+                    board={ranking.data.board}
                     me={user.id}
                   />
                 </div>
@@ -411,12 +446,11 @@ export default function Rankings() {
                       </div>
                       <RankingBadge badge={ranking.data.myRank.badge} />
                     </div>
-                    <p className="font-num text-xl font-black text-[#FFB700]">
-                      {formatMetric(
-                        ranking.data.myRank.metric,
-                        ranking.data.board.unit
-                      )}
-                    </p>
+                    <RankingMetric
+                      className="font-num text-xl font-black"
+                      value={ranking.data.myRank.metric}
+                      board={ranking.data.board}
+                    />
                   </div>
                 )}
                 <div className="overflow-hidden rounded-2xl border border-border bg-[#101d2b]">
@@ -467,9 +501,11 @@ export default function Rankings() {
                           </span>
                         )}
                       </div>
-                      <p className="font-num text-right font-black text-[#FFB700]">
-                        {formatMetric(row.metric, ranking.data.board.unit)}
-                      </p>
+                      <RankingMetric
+                        className="font-num text-right font-black"
+                        value={row.metric}
+                        board={ranking.data.board}
+                      />
                       <p className="hidden text-right font-num text-xs text-muted-foreground sm:block">
                         {Number.isFinite(row.detail)
                           ? row.detail.toLocaleString("zh-CN")

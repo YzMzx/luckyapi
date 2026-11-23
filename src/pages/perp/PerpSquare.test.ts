@@ -143,12 +143,12 @@ it("renders one named table per contract and keeps the holdership display withou
   expect(tables[0]).toContain("比特币持仓人（我）");
   expect(tables[0]).not.toContain(eth.nickname);
   expect(tables[0]).toContain(">在线</td>");
-  expect(tables[0]).toContain("+1.25</td>");
+  expect(tables[0]).toContain('text-emerald-300">+1.25</span>');
   expect(tables[1]).toContain("ETHUSDT 会员公开持仓</caption>");
   expect(tables[1]).toContain(eth.nickname);
   expect(tables[1]).not.toContain(btc.nickname);
   expect(tables[1]).toContain(">离线</td>");
-  expect(tables[1]).toContain("待估值</td>");
+  expect(tables[1]).toContain('text-muted-foreground">待估值</span>');
   expect(html).toContain("在线持仓玩家：1 人");
   expect(html).toContain('href="/contracts"');
   expect(html).not.toMatch(

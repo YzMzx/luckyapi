@@ -120,7 +120,17 @@ it.each([profit, loss])(
     weeks.mockClear();
     const html = render(board.key);
     expect(html).toContain(board.title + "</h2>");
-    expect(html).toContain("12.345 模拟金");
+    const isLoss = board.key === loss.key;
+    const metrics = [
+      ...html.matchAll(/<span class="([^"]*)">([+-]12\.345 模拟金)<\/span>/g),
+    ];
+    expect(metrics).toHaveLength(3); // Podium, my rank and list row.
+    for (const [, className, value] of metrics) {
+      expect(value).toBe(isLoss ? "-12.345 模拟金" : "+12.345 模拟金");
+      expect(className).toContain(
+        isLoss ? "text-rose-300" : "text-emerald-300"
+      );
+    }
     expect(ranking).toHaveBeenLastCalledWith(
       expect.objectContaining({ category: contracts, board: board.key }),
       expect.objectContaining({ enabled: true })

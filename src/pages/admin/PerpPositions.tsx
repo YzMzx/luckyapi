@@ -2,7 +2,8 @@ import { useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { Input } from "@/components/ui/input";
 import { Pager } from "@/components/Pager";
-import { baseCoin, coin, sim, signed, stamp } from "../perp/format";
+import { baseCoin, coin, sim, stamp } from "../perp/format";
+import { PnlAmount } from "../perp/PnlAmount";
 
 type Filters = { user: string; symbol: string; side: "" | "long" | "short" };
 const empty: Filters = { user: "", symbol: "", side: "" };
@@ -165,7 +166,7 @@ export default function PerpPositions() {
                         )}
                       </td>
                       <td>
-                        {p.pnlUnits !== null ? signed(p.pnlUnits) : "待估值"}
+                        <PnlAmount units={p.pnlUnits} />
                       </td>
                       <td>
                         {p.liquidationPriceUnits

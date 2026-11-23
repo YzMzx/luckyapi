@@ -1,4 +1,5 @@
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { PnlAmount } from "./PnlAmount";
 import { trpc } from "@/providers/trpc";
 import { getPerpLeverageRange } from "@contracts/perp-leverage";
 import {
@@ -9,7 +10,6 @@ import {
   input,
   orderLabel,
   panel,
-  signed,
   sim,
   time,
   type PerpApi,
@@ -228,7 +228,7 @@ export function TradeForm({
     !leverageProblem && calculated?.context === context ? calculated : null;
   const closeEstimate = result?.estimate.close;
   const estimateTitle = closing ? "平仓预估" : "委托预估";
-  const estimateRows: [string, string | null][] = closing
+  const estimateRows: [string, ReactNode][] = closing
     ? [
         [
           "平仓数量",
@@ -247,7 +247,9 @@ export function TradeForm({
         ],
         [
           "平仓净盈亏",
-          closeEstimate ? signed(closeEstimate.netPnlUnits) + " 模拟金" : null,
+          closeEstimate ? (
+            <PnlAmount units={closeEstimate.netPnlUnits} showUnit />
+          ) : null,
         ],
         [
           "预计到账",

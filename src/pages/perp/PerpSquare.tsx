@@ -4,16 +4,9 @@ import { Pager } from "@/components/Pager";
 import { SiteNav } from "@/components/SiteNav";
 import { useMe } from "@/hooks/useMe";
 import { trpc } from "@/providers/trpc";
-import {
-  baseCoin,
-  button,
-  coin,
-  panel,
-  signed,
-  sim,
-  type PerpApi,
-} from "./format";
+import { baseCoin, button, coin, panel, sim, type PerpApi } from "./format";
 import { Table } from "./shared";
+import { PnlAmount } from "./PnlAmount";
 import { usePerpPresence } from "./usePerpPresence";
 
 type SquareData = PerpApi["positionSquare"];
@@ -164,16 +157,8 @@ export default function PerpSquare() {
                             ? "—"
                             : sim(p.markPriceUnits)}
                         </td>
-                        <td
-                          className={
-                            p.pnlUnits === null || p.pnlUnits === 0
-                              ? "text-muted-foreground"
-                              : p.pnlUnits > 0
-                                ? "text-emerald-300"
-                                : "text-rose-300"
-                          }
-                        >
-                          {p.pnlUnits === null ? "待估值" : signed(p.pnlUnits)}
+                        <td>
+                          <PnlAmount units={p.pnlUnits} />
                         </td>
                       </tr>
                     ))
