@@ -28,9 +28,7 @@ import {
   SevenPickInsufficientFundsError,
 } from "./wallet";
 
-// Configuration/editor switches are NOT a release override. Only change this
-// blocked release state after end-to-end verification of independent OTS timing.
-const BETTING_ENABLED = false;
+import { sevenPickLaunchReady } from "./release";
 
 export class SevenPickError extends Error {
   readonly code:
@@ -193,7 +191,7 @@ export function getSevenPickSnapshot(
     name: SEVEN_PICK_NAME,
     now: nowMs,
     bettingEnabled:
-      BETTING_ENABLED &&
+      sevenPickLaunchReady() &&
       round?.status === "open" &&
       nowMs >= round.opensAt &&
       nowMs < round.closesAt,
@@ -401,6 +399,8 @@ type PrivateBetRow = {
   combinationKey: string;
   stakeUnits: number;
   receiptId: string;
+  payoutUnits: number;
+  refundUnits: number;
 };
 export type SevenPickOrder = {
   id: number;
@@ -413,6 +413,8 @@ export type SevenPickOrder = {
     itemIds: number[];
     stakeUnits: number;
     receiptId: string;
+    payoutUnits: number;
+    refundUnits: number;
   }[];
 };
 type OrderRow = Omit<SevenPickOrder, "bets"> & { payloadHash: string };
@@ -423,8 +425,11 @@ const SELECT_ORDER =
 function orderView(db: Database.Database, row: OrderRow): SevenPickOrder {
   const bets = db
     .prepare<[number], PrivateBetRow>(
-      "SELECT id,combination_key AS combinationKey,stake_units AS stakeUnits,receipt_id AS receiptId " +
-        "FROM seven_pick_bets WHERE order_id=? ORDER BY id"
+      "SELECT b.id,b.combination_key AS combinationKey,b.stake_units AS stakeUnits,b.receipt_id AS receiptId, " +
+        "CASE WHEN l.kind='payout' THEN l.delta_units ELSE 0 END AS payoutUnits, " +
+        "CASE WHEN l.kind='refund' THEN l.delta_units ELSE 0 END AS refundUnits " +
+        "FROM seven_pick_bets b LEFT JOIN seven_pick_ledger l ON l.bet_id=b.id " +
+        "AND l.kind IN ('payout','refund') WHERE b.order_id=? ORDER BY b.id"
     )
     .all(row.id)
     .map(({ combinationKey, ...bet }) => ({
@@ -470,10 +475,10 @@ export function placeSevenPickOrder(
   input: unknown,
   nowMs?: number
 ): SevenPickOrder {
-  if (!BETTING_ENABLED)
+  if (!sevenPickLaunchReady())
     throw new SevenPickError(
       "BETTING_DISABLED",
-      "独立时间证明尚未验证通过，暂不接受投注"
+      "七星寻宝当前未启用，暂不接受投注"
     );
   return placeOrder(db, userId, input, nowMs);
 }

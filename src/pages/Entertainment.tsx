@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 export default function Entertainment() {
   const { user, isLoading } = useMe({ requireAuth: true, requireOnboarded: true });
   const summary = trpc.entertainment.summary.useQuery(undefined, { enabled: !!user?.onboarded });
+  const sevenPick = trpc.sevenPick.overview.useQuery(undefined, { enabled: !!user?.onboarded, refetchInterval: 30_000 });
 
   if (isLoading || !user) return <div className="flex min-h-screen items-center justify-center text-muted-foreground">加载中…</div>;
 
@@ -52,8 +53,10 @@ export default function Entertainment() {
       to: "/entertainment/seven-pick",
       icon: Gem,
       title: "七星寻宝",
-      desc: "32 件宝物选 7 件 · 使用模拟合约钱包 · 暂可试玩选号",
-      status: { text: "预览", cls: "border-border bg-white/5 text-muted-foreground" },
+      desc: "32 件宝物选 7 件 · 使用模拟合约钱包",
+      status: !sevenPick.data ? null : sevenPick.data.acceptingOrders
+        ? { text: "可投注", cls: "border-[#00B77D]/50 bg-[#00B77D]/10 text-[#00B77D]" }
+        : { text: sevenPick.data.launchReady ? "待开盘" : "预览", cls: "border-border bg-white/5 text-muted-foreground" },
     },
     {
       to: "/contracts",

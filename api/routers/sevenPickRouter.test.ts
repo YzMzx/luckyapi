@@ -34,6 +34,9 @@ it("keeps preview non-financial, scopes admin configuration and hides wallet ris
   expect(initial.preview.items).toHaveLength(32);
   expect(initial.preview.openMinutes).toEqual([780, 840, 900, 960, 1020, 1080, 1140, 1200, 1260]);
   expect(await member.sevenPick.account()).toEqual({ cashUnits: 0, orders: [] });
+  const wager = { roundId: 1, requestKey: "launch-gate-test", bets: [{ itemIds: [1, 2, 3, 4, 5, 6, 7], amount: "1.000" }] };
+  await expect(guest.sevenPick.place(wager)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(member.admin.sevenPick.audit({ roundId: 1 })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   const input = { expectedVersionId: null, config: { enabled: true, ...initial.preview } };
   await expect(member.admin.sevenPick.save(input)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   const saved = await admin.admin.sevenPick.save(input);
@@ -57,6 +60,12 @@ it("keeps preview non-financial, scopes admin configuration and hides wallet ris
     expect(result).not.toHaveProperty("maxExposureUnits");
   }
   expect((await admin.admin.sevenPick.overview()).rounds[0].riskLimitUnits).toBe("50000000");
+  await expect(member.sevenPick.place({ ...wager, roundId: round.id })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  await expect(admin.admin.sevenPick.reviewRefund({ roundId: round.id, reason: "seal_missed", notes: "仅接口超时" })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  expect((await admin.admin.sevenPick.audit({ roundId: round.id })).lifecycle.status).toBe("open");
+  const { sevenPickProofApp } = await import("../routes/sevenPickProof");
+  expect((await sevenPickProofApp.request("/rounds/" + round.id + "/proof")).status).toBe(404);
+  expect((await sevenPickProofApp.request("/rounds/abc/proof")).status).toBe(400);
   expect(await member.sevenPick.account()).toEqual({ cashUnits: 250_000_000, orders: [] });
   expect(db.$client.prepare("SELECT count(*) FROM seven_pick_ledger").pluck().get()).toBe(0);
 });

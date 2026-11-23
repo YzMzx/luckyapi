@@ -118,15 +118,19 @@ export async function getPendingSessionUser(req: Request): Promise<PendingUser |
   return rows[0]?.user ?? null;
 }
 
-export async function isAdminRequest(req: Request): Promise<boolean> {
+async function getAdminSessionId(req: Request): Promise<number | null> {
   const token = readCookie(req, ADMIN_COOKIE);
-  if (!token) return false;
-  const rows = await getDb()
-    .select()
+  if (!token) return null;
+  const [session] = await getDb()
+    .select({ id: adminSessions.id })
     .from(adminSessions)
     .where(and(eq(adminSessions.token, token), gt(adminSessions.expiresAt, new Date())))
     .limit(1);
-  return rows.length > 0;
+  return session?.id ?? null;
+}
+
+export async function isAdminRequest(req: Request): Promise<boolean> {
+  return (await getAdminSessionId(req)) !== null;
 }
 
 export async function createAdminSession(): Promise<string> {
@@ -173,10 +177,10 @@ export const pendingQuery = publicQuery.use(async ({ ctx, next }) => {
 
 /** 需要管理员登录的 procedure */
 export const adminQuery = publicQuery.use(async ({ ctx, next }) => {
-  const ok = await isAdminRequest(ctx.req);
-  if (!ok) throw new TRPCError({ code: "UNAUTHORIZED", message: "需要管理员登录" });
+  const adminSessionId = await getAdminSessionId(ctx.req);
+  if (adminSessionId === null) throw new TRPCError({ code: "UNAUTHORIZED", message: "需要管理员登录" });
   getDb().transaction((tx) => expireAllCreditGrants(tx));
-  return next();
+  return next({ ctx: { adminSessionId } });
 });
 
 /** 取客户端 IP：取代理链最后一跳（客户端可伪造前面的条目，最后一跳由平台网关写入） */

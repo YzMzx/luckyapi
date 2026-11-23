@@ -10,6 +10,7 @@ import {
 const ODDS = [0, 0, 0, 3, 12, 100, 1000, 50_000];
 const A = [1, 2, 3, 4, 5, 6, 7];
 const B = [1, 2, 3, 4, 5, 6, 32];
+const DISTANT = [1, 2, 3, 20, 21, 22, 23];
 const riskBet = (items: number[], stakeUnits: number) => ({
   itemMask: sevenPickItemMask(items),
   stakeUnits,
@@ -79,14 +80,57 @@ it("matches an independent exhaustive intersection oracle when nonmonotonic odds
   ).toBe(oracle);
 });
 
+it("matches full enumeration for a mixed book spanning all 32 items", () => {
+  const odds = [6, 2, 27, 130, 7, 912, 350, 2100];
+  const bets = Array.from({ length: 16 }, (_, index) =>
+    riskBet(
+      Array.from({ length: 7 }, (_, pick) => ((index * 2 + 5 * pick) % 32) + 1),
+      1000 + index * 359
+    )
+  );
+  bets.push({ ...bets[5], stakeUnits: 100_000 });
+  let expected = 0;
+  for (const draw of sevenPickDrawMasks()) {
+    let total = 0;
+    for (const { itemMask, stakeUnits } of bets)
+      total += stakeUnits * odds[sevenPickCountBits(itemMask & draw)];
+    if (total > expected) expected = total;
+  }
+  expect(calculateSevenPickMaxExposure(bets.values(), odds)).toBe(
+    BigInt(expected)
+  );
+  // A later call must recompute from its full input, including after a rejection.
+  expect(calculateSevenPickMaxExposure(bets.slice(0, 1), odds)).toBe(
+    2_100_000n
+  );
+});
+
+it("handles negative intermediate coefficients even when all final payouts fit a safe Number", () => {
+  const prize = Math.floor(Number.MAX_SAFE_INTEGER / 3);
+  const odds = [0, 0, 0, prize, 0, 0, 0, 0];
+  // Share precisely three elements with all tickets and fill with four outside their union.
+  const bets = [A, B, DISTANT].map(items => riskBet(items, 1));
+  expect(calculateSevenPickMaxExposure(bets, odds)).toBe(3n * BigInt(prize));
+});
+
+it("handles exact totals above the unsigned 64-bit transform range", () => {
+  const high = Number.MAX_SAFE_INTEGER;
+  const six = Math.floor(high / 10);
+  const odds = [0, 0, 0, 0, 0, 0, six, high];
+  const bets = [riskBet(A, 10_000), riskBet(B, 10_001), riskBet(DISTANT, 1)];
+  expect(calculateSevenPickMaxExposure(bets, odds)).toBe(
+    10_001n * BigInt(high) + 10_000n * BigInt(six)
+  );
+});
+
 it("keeps integer totals exact beyond JavaScript's safe Number range", () => {
   const largest = Number.MAX_SAFE_INTEGER;
   expect(
     calculateSevenPickMaxExposure(
-      [riskBet(A, largest), riskBet(B, largest - 1)],
+      [riskBet(A, largest), riskBet(B, largest - 1), riskBet(DISTANT, 1)],
       ODDS
     )
-  ).toBe(BigInt(largest) * 50_000n + BigInt(largest - 1) * 1000n);
+  ).toBe(BigInt(largest) * 50_000n + BigInt(largest - 1) * 1000n + 3n);
   expect(() =>
     calculateSevenPickMaxExposure([{ itemMask: 1, stakeUnits: 1000 }], ODDS)
   ).toThrow(RangeError);

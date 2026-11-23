@@ -31,6 +31,8 @@ function ConfigForm({ latest }: { latest: Overview["latest"] }) {
   const [minimum, setMinimum] = useState(unitsText(latest.minStakeUnits));
   const [maximum, setMaximum] = useState(unitsText(latest.maxStakeUnits));
   const [openError, setOpenError] = useState(false);
+  const [uploading, setUploading] = useState<number | null>(null);
+  const [imageStatus, setImageStatus] = useState<{itemId: number; message: string; error: boolean} | null>(null);
   const save = trpc.admin.sevenPick.save.useMutation({ onSuccess: () => {
     void utils.admin.sevenPick.overview.invalidate();
     void utils.sevenPick.overview.invalidate();
@@ -40,8 +42,29 @@ function ConfigForm({ latest }: { latest: Overview["latest"] }) {
     setForm((prev) => ({ ...prev, items: prev.items.map((item) => item.id === itemId ? { ...item, ...patch } : item) }));
   }
 
+  async function uploadImage(itemId: number, file: File) {
+    if (uploading !== null) return;
+    setUploading(itemId);
+    setImageStatus(null);
+    try {
+      const body = new FormData();
+      body.set("file", file);
+      const response = await fetch("/seven-pick-images/upload", { method: "POST", body, credentials: "same-origin" });
+      const payload = await response.json().catch(() => null) as {imageUrl?: string; error?: string} | null;
+      if (!response.ok || typeof payload?.imageUrl !== "string") throw new Error(payload?.error || "图片上传失败");
+      changeItem(itemId, { imageUrl: payload.imageUrl });
+      setImageStatus({ itemId, message: "图片已上传，保存版本后使用。", error: false });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "图片上传失败";
+      setImageStatus({ itemId, message, error: true });
+    } finally {
+      setUploading(null);
+    }
+  }
+
   return <form className="space-y-5" onSubmit={(event) => {
     event.preventDefault();
+    if (uploading !== null || save.isPending) return;
     const slots = openTimes.split(/[、,，]/).map((value) => value.trim());
     if (!slots.every((value) => timePattern.test(value))) { setOpenError(true); return; }
     const openMinutes = slots.map((value) => Number(value.slice(0, 2)) * 60 + Number(value.slice(3)));
@@ -49,7 +72,7 @@ function ConfigForm({ latest }: { latest: Overview["latest"] }) {
   }}>
     <fieldset className="space-y-4 rounded-xl border border-border bg-card p-4">
       <legend className="px-2 font-bold">开关与时间</legend>
-      <label className="flex items-start gap-2 text-sm"><input className="mt-1 accent-primary" type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />为次日配置开启玩法（不会解除存证上线限制）</label>
+      <label className="flex items-start gap-2 text-sm"><input className="mt-1 accent-primary" type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />为次日配置开启玩法</label>
       <div className="space-y-1">
         <label htmlFor={openId} className="text-sm">开盘时间（北京时间，多个时刻用顿号或逗号分隔）</label>
         <input id={openId} className={fieldClass} required value={openTimes} aria-invalid={openError || undefined} aria-describedby={openError ? errorId : undefined} onChange={(e) => { setOpenTimes(e.target.value); setOpenError(false); }} />
@@ -72,29 +95,89 @@ function ConfigForm({ latest }: { latest: Overview["latest"] }) {
     </fieldset>
     <fieldset className="space-y-4 rounded-xl border border-border bg-card p-4">
       <legend className="px-2 font-bold">32 件宝物</legend>
-      <p className="text-sm text-muted-foreground">图片外链仅支持 HTTPS；玩家浏览器直接加载，服务器不会抓取外链。尚不支持上传。</p>
+      <p className="text-sm text-muted-foreground">可上传 JPEG、PNG 或 WebP，单张不超过 2 MiB；也可填写 HTTPS 外链。</p>
       {form.items.map((item) => <fieldset key={item.id} className="grid gap-3 rounded-lg border border-border px-3 pb-3 md:grid-cols-2 xl:grid-cols-4">
         <legend className="px-1 text-sm font-semibold">物品 #{item.id}</legend>
         <label className="space-y-1 text-sm">名称<input className={fieldClass} value={item.name} required onChange={(e) => changeItem(item.id, { name: e.target.value })} /></label>
         <label className="space-y-1 text-sm">描述<input className={fieldClass} value={item.description} onChange={(e) => changeItem(item.id, { description: e.target.value })} /></label>
         <NumberField label="排序" value={item.position} min={1} onChange={(position) => changeItem(item.id, { position })} />
-        <label className="space-y-1 text-sm">HTTPS 图片地址<input inputMode="url" className={fieldClass} value={item.imageUrl ?? ""} onChange={(e) => changeItem(item.id, { imageUrl: e.target.value || null })} /></label>
+        <div className="space-y-2">
+          <label className="block space-y-1 text-sm">图片地址<input inputMode="url" className={fieldClass} disabled={uploading === item.id} value={item.imageUrl ?? ""} onChange={(e) => changeItem(item.id, { imageUrl: e.target.value || null })} /></label>
+          <label className="block text-sm">本地图片
+            <input type="file" accept="image/jpeg,image/png,image/webp" className="block w-full text-xs" disabled={uploading !== null || save.isPending} onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void uploadImage(item.id, file);
+            }} />
+          </label>
+          {uploading === item.id && <p className="text-xs">上传中…</p>}
+          {imageStatus?.itemId === item.id && <p className={imageStatus.error ? "text-xs text-destructive" : "text-xs"} role={imageStatus.error ? "alert" : "status"}>{imageStatus.message}</p>}
+        </div>
       </fieldset>)}
     </fieldset>
     {save.error && <p role="alert" className="whitespace-pre-wrap break-words text-sm text-destructive">保存失败：{save.error.message}</p>}
-    <button type="submit" disabled={save.isPending} className="admin-primary px-5 py-2 disabled:opacity-50">{save.isPending ? "保存中…" : "保存为次日版本"}</button>
+    <button type="submit" disabled={save.isPending || uploading !== null} className="admin-primary px-5 py-2 disabled:opacity-50">{save.isPending ? "保存中…" : "保存为次日版本"}</button>
   </form>;
+}
+
+function RoundAudit({ rounds }: { rounds: Overview["rounds"] }) {
+  const [roundId, setRoundId] = useState<number | null>(null);
+  const [notes, setNotes] = useState("");
+  const audit = trpc.admin.sevenPick.audit.useQuery({ roundId: roundId ?? 0 }, { enabled: roundId !== null, refetchInterval: 10_000 });
+  const utils = trpc.useUtils();
+  const approval = trpc.admin.sevenPick.reviewRefund.useMutation({ onSuccess: () => {
+    setNotes("");
+    void utils.admin.sevenPick.audit.invalidate();
+    void utils.admin.sevenPick.overview.invalidate();
+  } });
+  const lifecycle = audit.data?.lifecycle;
+  return <section className="space-y-3 rounded-xl border border-border bg-card p-4">
+    <h2 className="font-bold">异常核查与审计</h2>
+    {!rounds.length ? <p className="text-sm text-muted-foreground">暂无场次证据。</p> : <label className="block space-y-1 text-sm">查看场次
+      <select className={fieldClass} value={roundId ?? ""} onChange={(event) => {
+        setRoundId(event.target.value ? Number(event.target.value) : null);
+        setNotes("");
+        approval.reset();
+      }}>
+        <option value="">请选择</option>
+        {rounds.map((round) => <option key={round.id} value={round.id}>第 {round.id} 场 · {beijing.format(round.opensAt)}</option>)}
+      </select>
+    </label>}
+    {audit.error && <p role="alert" className="text-sm text-destructive">{audit.error.message}</p>}
+    {lifecycle && <div className="space-y-3">
+      <p className="text-sm">状态 {lifecycle.status}{lifecycle.reviewReasons.length > 0 && <> · {lifecycle.reviewReasons.join("、")}</>}</p>
+      {lifecycle.refund && <p className="text-sm">已退 {lifecycle.refund.refundedBets} / {lifecycle.refund.totalBets} 组 · {lifecycle.refund.summary}</p>}
+      {lifecycle.status === "review" && lifecycle.reviewReasons.includes("sealed_after_beacon") && roundId !== null && <form className="space-y-3" onSubmit={(event) => {
+        event.preventDefault();
+        if (notes.trim() && !approval.isPending) approval.mutate({ roundId, reason: "seal_missed", notes });
+      }}>
+        <fieldset className="space-y-3" disabled={approval.isPending}>
+          <legend className="text-sm font-semibold">退款核查</legend>
+          <p className="text-sm">系统检测到封盘晚于或等于固定 Quicknet 轮次，符合取消并原额退款的条件。</p>
+          <label className="block text-sm">核查理由（管理员可见）<textarea className={fieldClass} value={notes} maxLength={1000} required onChange={(event) => setNotes(event.target.value)} /></label>
+          <button type="submit" className="admin-primary px-4 py-2" disabled={!notes.trim()}>提交退款核查</button>
+        </fieldset>
+        {approval.error && <p role="alert" className="text-sm text-destructive">{approval.error.message}</p>}
+      </form>}
+      {audit.data?.entries.length ? <ul className="space-y-2 text-sm">{audit.data.entries.map((entry) => <li key={entry.id}>
+        <details className="rounded-lg border border-border px-3 py-2">
+          <summary className="cursor-pointer">{beijing.format(entry.createdAt)} · {entry.kind}</summary>
+          <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(entry.details, null, 2)}</pre>
+        </details>
+      </li>)}</ul> : <p className="text-sm text-muted-foreground">暂无审计条目。</p>}
+    </div>}
+  </section>;
 }
 
 export default function AdminSevenPick() {
   const overview = trpc.admin.sevenPick.overview.useQuery();
   if (overview.isPending) return <p role="status">加载七星寻宝配置…</p>;
   if (overview.error) return <p role="alert">加载失败：{overview.error.message} <button type="button" className="underline" onClick={() => void overview.refetch()}>重试</button></p>;
-  const { active, latest, rounds, versions } = overview.data;
+  const { active, latest, rounds, versions, launchReady } = overview.data;
   return <div className="max-w-[90rem] space-y-5">
     <section className="space-y-2 rounded-xl border border-border bg-card p-4">
-      <h2 className="font-bold">上线状态：仅预览</h2>
-      <p className="text-sm text-muted-foreground">尚未取得符合要求的独立封盘存证，不会接收投注。配置按北京时间次日生效，已创建场次不受影响。</p>
+      <h2 className="font-bold">上线状态：{launchReady ? "已启用" : "仅预览"}</h2>
+      <p className="text-sm text-muted-foreground">{!launchReady && "部署开关未开启，暂不接收投注。"}配置按北京时间次日生效，已创建场次不受影响。</p>
       <p className="text-sm">当前生效：{active.id === null ? "默认规则" : "版本 #" + active.id} · 最新版本：{latest.id === null ? "默认规则" : "#" + latest.id + "，" + beijing.format(latest.effectiveAt)}</p>
     </section>
     <ConfigForm key={latest.id ?? "default"} latest={latest} />
@@ -106,5 +189,6 @@ export default function AdminSevenPick() {
       <h2 className="font-bold">场次风控</h2>
       {rounds.length ? <ul className="space-y-2 text-sm">{rounds.map((round) => <li key={round.id}>第 {round.id} 场 · {round.status} · 最大潜在返还 / 风控上限：{round.maxExposureUnits ?? "—"} / {round.riskLimitUnits ?? "—"} milli-USDT</li>)}</ul> : <p className="text-sm text-muted-foreground">暂无正式场次。</p>}
     </section>
+    <RoundAudit rounds={rounds} />
   </div>;
 }

@@ -144,6 +144,8 @@ services:
       LINUXDO_PRIMARY_ORIGIN: ${LINUXDO_PRIMARY_ORIGIN:-}
       PERP_DEPOSITS_ENABLED: ${PERP_DEPOSITS_ENABLED:-1}
       PERP_TRADING_ENABLED: ${PERP_TRADING_ENABLED:-1}
+      SEVEN_PICK_ENABLED: ${SEVEN_PICK_ENABLED:-0}
+      SEVEN_PICK_RFC3161: ${SEVEN_PICK_RFC3161:-0}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
       interval: 30s
@@ -184,6 +186,8 @@ docker compose ps
 | `LINUXDO_PRIMARY_ORIGIN` | 唯一可信站点 Origin | 使用 OAuth 时 |
 | `SQLITE_PATH` | SQLite 数据文件路径 | 否 |
 | `PORT` | 对外映射端口 | 否，默认 `3000` |
+| `SEVEN_PICK_ENABLED` | 设为 `1` 开启七星寻宝生产运行（还须启用已生效的后台配置） | 否，默认 `0`、只预览；见[七星寻宝运行手册](./docs/seven-pick-development.md) |
+| `SEVEN_PICK_RFC3161` | 设为 `1` 启用封盘摘要的可选时间凭证，不影响开奖或派奖 | 否，默认 `0` |
 
 应用环境变量示例见 [`.env.example`](.env.example)。
 
