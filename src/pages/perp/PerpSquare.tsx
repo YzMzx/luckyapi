@@ -1,34 +1,69 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { useMe } from "@/hooks/useMe";
-import { SiteNav } from "@/components/SiteNav";
 import { Pager } from "@/components/Pager";
+import { SiteNav } from "@/components/SiteNav";
+import { useMe } from "@/hooks/useMe";
 import { trpc } from "@/providers/trpc";
-import { baseCoin, button, coin, input, signed, sim, panel } from "./format";
+import {
+  baseCoin,
+  button,
+  coin,
+  panel,
+  signed,
+  sim,
+  type PerpApi,
+} from "./format";
 import { Table } from "./shared";
 import { usePerpPresence } from "./usePerpPresence";
+
+type SquareData = PerpApi["positionSquare"];
+const columns = [
+  "玩家",
+  "合约页状态",
+  "方向 / 杠杆",
+  "数量",
+  "开仓均价（USDT）",
+  "标记价（USDT）",
+  "浮动盈亏（模拟 USDT）",
+];
+
+function Loading({ label }: { label: string }) {
+  return (
+    <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+      <progress className="h-1 w-16 accent-[#FFB700]" />
+      {label}
+    </label>
+  );
+}
 
 export default function PerpSquare() {
   const { user, isLoading } = useMe({
     requireAuth: true,
     requireOnboarded: true,
   });
-  const [symbol, setSymbol] = useState(""),
-    [onlineOnly, setOnline] = useState(false),
-    [page, setPage] = useState(1);
-  usePerpPresence(!!user?.onboarded);
+  const enabled = !!user?.onboarded;
+  usePerpPresence(enabled);
+  const [{ pages, previousData }, setPagination] = useState<{
+    pages: Record<string, number>;
+    previousData?: SquareData;
+  }>({ pages: {} });
   const list = trpc.perps.positionSquare.useQuery(
-    { page, pageSize: 20, onlineOnly, symbol: symbol || undefined },
+    { pages },
     {
-      enabled: !!user?.onboarded,
+      enabled,
       refetchInterval: 5000,
       retry: 1,
       placeholderData: previous => previous,
     }
   );
-  const categories = list.data?.categories ?? [];
+  // A failed page request no longer receives placeholder data from React Query.
+  const data = list.data ?? previousData;
+  const groups = data?.groups ?? [];
+  const isPrevious = list.isPlaceholderData || !list.data;
+
   if (isLoading || !user?.onboarded)
     return <p className="p-8 text-center">正在读取账户…</p>;
+
   return (
     <div className="min-h-screen">
       <SiteNav user={user} />
@@ -41,91 +76,66 @@ export default function PerpSquare() {
               秒内有合约页面在前台打开，不代表正在下单。
             </p>
           </div>
-          <nav aria-label="合约社区" className="flex flex-wrap gap-2">
-            <Link className={button} to="/contracts/live">实时盈亏榜 →</Link>
-            <Link className={button} to="/contracts">返回合约</Link>
+          <nav aria-label="合约社区">
+            <Link className={button} to="/contracts">
+              返回合约
+            </Link>
           </nav>
         </header>
-        <section className={panel}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-bold">
-              玩家持仓
-              {list.data && !list.error && !list.isPlaceholderData && (
-                <span className="ml-2 text-sm font-normal">
-                  在线持仓玩家：{list.data.onlineHolders} 人
-                </span>
-              )}
-            </h2>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={onlineOnly}
-                onChange={e => {
-                  setOnline(e.target.checked);
-                  setPage(1);
-                }}
-              />
-              只看在线玩家
-            </label>
+        <section className={panel + " space-y-4"}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h2 className="text-lg font-bold">玩家持仓</h2>
+            {data && (
+              <p className="text-sm">在线持仓玩家：{data.onlineHolders} 人</p>
+            )}
           </div>
-          <div className="mt-3 max-w-xs text-sm">
-            <label htmlFor="square-contract">合约分类</label>
-            <select
-              id="square-contract"
-              className={input}
-              value={symbol}
-              disabled={!symbol && !categories.length}
-              onChange={e => {
-                setSymbol(e.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="">全部合约</option>
-              {symbol &&
-                !categories.some(category => category.symbol === symbol) && (
-                  <option value={symbol}>{symbol}</option>
-                )}
-              {categories.map(category => (
-                <option key={category.symbol} value={category.symbol}>
-                  {category.symbol}（{category.total} 笔）
-                </option>
-              ))}
-            </select>
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             每 5 秒刷新。浮动盈亏按 Bybit
             标记价估算，不含交易手续费和资金费；无有效报价时显示「待估值」。
           </p>
-          {(list.isLoading || list.isPlaceholderData) && (
-            <p role="status">正在加载…</p>
-          )}
-          {list.error ? (
-            <p role="alert">
-              持仓读取失败：{list.error.message}{" "}
-              <button className={button} onClick={() => void list.refetch()}>
+          {list.isLoading && !data && <Loading label="正在加载持仓…" />}
+          {list.error && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <p role="alert">持仓读取失败：{list.error.message}</p>
+              <button
+                type="button"
+                className={button}
+                onClick={() => void list.refetch()}
+              >
                 重试
               </button>
+            </div>
+          )}
+          {data && groups.length === 0 && (
+            <p className="py-3 text-sm text-muted-foreground">
+              当前暂无公开持仓。
             </p>
-          ) : (
-            list.data &&
-            !list.isPlaceholderData && (
-              <>
-                {list.data.items.length ? (
-                  <Table
-                    title={symbol ? `${symbol} 会员公开持仓` : "会员公开持仓"}
-                    columns={[
-                      "玩家",
-                      "合约页状态",
-                      "合约",
-                      "方向 / 杠杆",
-                      "数量",
-                      "开仓均价（USDT）",
-                      "标记价（USDT）",
-                      "浮动盈亏（模拟 USDT）",
-                    ]}
-                  >
-                    {list.data.items.map(p => (
-                      <tr key={JSON.stringify([p.nickname, p.symbol])}>
+          )}
+          {groups.map(group => {
+            const { symbol, page, totalPages } = group;
+            // The server may clamp a requested page if positions have since closed.
+            const requestedPage = Math.min(pages[symbol] ?? 1, totalPages);
+            const needsPage = isPrevious && requestedPage !== page;
+            return (
+              <section
+                key={symbol}
+                className="min-w-0 rounded-lg border border-border p-3 sm:p-4"
+              >
+                <h3 className="text-base font-bold">{symbol}</h3>
+                <Table title={`${symbol} 会员公开持仓`} columns={columns}>
+                  {needsPage ? (
+                    <tr>
+                      <td colSpan={columns.length}>
+                        {list.error ? (
+                          `未能加载第 ${requestedPage} 页。`
+                        ) : (
+                          <Loading label={`正在加载第 ${requestedPage} 页…`} />
+                        )}
+                      </td>
+                    </tr>
+                  ) : (
+                    group.items.map(p => (
+                      <tr key={p.nickname}>
                         <th
                           className="sticky left-0 bg-[#101d2b] px-3 py-2"
                           scope="row"
@@ -142,7 +152,6 @@ export default function PerpSquare() {
                         >
                           {p.online ? "在线" : "离线"}
                         </td>
-                        <td>{p.symbol}</td>
                         <td>
                           {p.side === "long" ? "多" : "空"} · {p.leverage}×
                         </td>
@@ -167,27 +176,40 @@ export default function PerpSquare() {
                           {p.pnlUnits === null ? "待估值" : signed(p.pnlUnits)}
                         </td>
                       </tr>
-                    ))}
-                  </Table>
-                ) : (
-                  <p className="py-5 text-sm text-muted-foreground">
-                    {onlineOnly
-                      ? "所选分类暂无在线玩家持仓。"
-                      : "所选分类暂无公开持仓。"}
-                  </p>
-                )}
-                <Pager
-                  className="mt-4"
-                  page={list.data.page}
-                  pageSize={list.data.pageSize}
-                  totalPages={list.data.totalPages}
-                  total={list.data.total}
-                  onPage={setPage}
-                  unit="笔持仓"
-                />
-              </>
-            )
-          )}
+                    ))
+                  )}
+                </Table>
+                <nav aria-label={`${symbol} 持仓分页`}>
+                  <fieldset disabled={needsPage}>
+                    <Pager
+                      className="mt-3"
+                      page={page}
+                      pageSize={group.pageSize}
+                      totalPages={totalPages}
+                      total={group.total}
+                      onPage={nextPage => {
+                        if (needsPage || nextPage === page) return;
+                        setPagination(previous => {
+                          if (previous.pages[symbol] !== pages[symbol])
+                            return previous;
+                          const next: Record<string, number> = {};
+                          for (const group of groups) {
+                            const selected =
+                              group.symbol === symbol
+                                ? nextPage
+                                : previous.pages[group.symbol];
+                            if (selected > 1) next[group.symbol] = selected;
+                          }
+                          return { pages: next, previousData: data };
+                        });
+                      }}
+                      unit="笔持仓"
+                    />
+                  </fieldset>
+                </nav>
+              </section>
+            );
+          })}
         </section>
       </main>
     </div>

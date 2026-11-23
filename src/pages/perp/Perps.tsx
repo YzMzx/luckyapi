@@ -300,7 +300,7 @@ export default function Perps() {
               持仓广场 →
             </Link>
             <Link className={button} to="/contracts/live">实时盈亏榜 →</Link>
-            <Link className={button} to="/contracts/weeks">
+            <Link className={button} to="/leaderboard?category=contracts&board=weekly">
               历史盈亏周榜 →
             </Link>
           </nav>

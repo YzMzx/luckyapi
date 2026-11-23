@@ -6,7 +6,7 @@ import { getDb } from "../queries/connection";
 import { readDisplayBadges } from "../queries/display-badges";
 import { currentBusinessDay } from "../queries/entertainment-control";
 
-const categories = ["overall", "api", "finance", "entertainment"] as const;
+const categories = ["overall", "api", "finance", "entertainment", "contracts"] as const;
 const periods = ["today", "week", "month", "all"] as const;
 type Category = typeof categories[number];
 type Period = typeof periods[number];
@@ -16,7 +16,7 @@ type Board = {
   key: string;
   title: string;
   description: string;
-  unit: "money" | "count" | "tokens" | "milliseconds" | "minutes" | "score";
+  unit: "money" | "sim" | "count" | "tokens" | "milliseconds" | "minutes" | "score";
   periods: Period[];
   table: string;
   userColumn: string;
@@ -60,6 +60,18 @@ const boards: Board[] = [
   { category: "entertainment", key: "slot_wins", title: "老虎机胜场", description: "净收益大于零的结算局数", unit: "count", periods: allPeriods, table: "checkins x", userColumn: "x.user_id", metric: "COUNT(*)", dateColumn: "x.created_at", where: "x.delta > 0" },
   { category: "entertainment", key: "duel_wins", title: "决斗赢家", description: "决斗税后净收益", unit: "money", periods: allPeriods, table: "duel_round_results x", userColumn: "x.user_id", metric: "SUM(x.settled_net_units) / 1000000.0", dateColumn: "x.settled_at", where: "x.result = 'win'", detail: "COUNT(*)" },
   { category: "entertainment", key: "duel_losses", title: "决斗逆风", description: "决斗已结算净亏损", unit: "money", periods: allPeriods, table: "duel_round_results x", userColumn: "x.user_id", metric: "SUM(-x.settled_net_units) / 1000000.0", dateColumn: "x.settled_at", where: "x.result = 'loss'", detail: "COUNT(*)" },
+
+  // Perp order PnL and fees are stored in milli-USDT, separate from account balances.
+  {
+    category: "contracts", key: "liquidation_loss", title: "爆仓亏损榜", description: "累计每笔爆仓实际亏损（含手续费）",
+    unit: "sim", periods: allPeriods, table: "perp_orders x", userColumn: "x.user_id", dateColumn: "x.created_at",
+    metric: "SUM(MAX(0, x.fee_units - x.pnl_units)) / 1000.0", where: "x.action = 'liquidate'", having: "metric > 0",
+  },
+  {
+    category: "contracts", key: "closed_profit", title: "平仓盈利榜", description: "累计主动平仓净盈利（扣除手续费，盈亏相抵）",
+    unit: "sim", periods: allPeriods, table: "perp_orders x", userColumn: "x.user_id", dateColumn: "x.created_at",
+    metric: "SUM(x.pnl_units - x.fee_units) / 1000.0", where: "x.action = 'close'", having: "metric > 0",
+  },
 ];
 
 function bounds(period: Period) {
@@ -85,6 +97,7 @@ export const rankingsRouter = createRouter({
     categories: [
       { key: "overall" as const, label: "综合" }, { key: "api" as const, label: "API" },
       { key: "finance" as const, label: "金融" }, { key: "entertainment" as const, label: "娱乐" },
+      { key: "contracts" as const, label: "合约" },
     ],
     boards: boards.map(({ table: _table, userColumn: _userColumn, metric: _metric, dateColumn: _dateColumn, where: _where, having: _having, order: _order, detail: _detail, joins: _joins, ...board }) => board),
   })),

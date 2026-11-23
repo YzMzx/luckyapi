@@ -7,7 +7,6 @@ import Onboarding from './pages/Onboarding'
 import Draw from './pages/Draw'
 import Entertainment from './pages/Entertainment'
 import Perps from './pages/perp/Perps'
-import PerpBoard from './pages/perp/PerpBoard'
 import PerpLiveBoard from './pages/perp/PerpLiveBoard'
 import PerpSquare from './pages/perp/PerpSquare'
 import Slot from './pages/Slot'
@@ -89,7 +88,7 @@ export default function App() {
         <Route path="/contracts" element={<Perps />} />
         <Route path="/contracts/square" element={<PerpSquare />} />
         <Route path="/contracts/live" element={<PerpLiveBoard />} />
-        <Route path="/contracts/weeks" element={<PerpBoard />} />
+        <Route path="/contracts/weeks" element={<Navigate to="/leaderboard?category=contracts&board=weekly" replace />} />
         <Route path="/slot" element={<Slot />} />
         <Route path="/checkin" element={<Checkin />} />
         <Route path="/dashboard" element={<Navigate to="/console" replace />} />

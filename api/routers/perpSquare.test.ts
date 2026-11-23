@@ -102,12 +102,15 @@ it("shares only member-facing open positions and expires visible-tab presence", 
     code: "UNAUTHORIZED",
   });
   await caller(ta).perps.heartbeat();
-  const first = await viewer.perps.positionSquare({
-    pageSize: 1,
-    onlineOnly: true,
-  });
-  expect(first).toMatchObject({ total: 2, totalPages: 2, onlineHolders: 1 });
-  expect(first.items[0]).toEqual({
+  const square = viewer.perps.positionSquare;
+  const first = await square({});
+  expect(first.onlineHolders).toBe(1);
+  expect(first.groups.map(g => [g.symbol, g.total, g.page])).toEqual([
+    ["BTCUSDT", 1, 1],
+    ["ETHUSDT", 1, 1],
+    ["NVDAUSDT", 1, 1],
+  ]);
+  expect(first.groups[0].items[0]).toEqual({
     nickname: "甲",
     symbol: "BTCUSDT",
     side: "long",
@@ -119,102 +122,79 @@ it("shares only member-facing open positions and expires visible-tab presence", 
     online: true,
     mine: false,
   });
-  expect(
-    (
-      await viewer.perps.positionSquare({
-        page: 2,
-        pageSize: 1,
-        onlineOnly: true,
-      })
-    ).items[0].symbol
-  ).toBe("NVDAUSDT");
-  const categories = [
-    { symbol: "BTCUSDT", total: 1 },
-    { symbol: "ETHUSDT", total: 1 },
-    { symbol: "NVDAUSDT", total: 1 },
-  ];
-  expect(
-    await viewer.perps.positionSquare({
-      symbol: "NVDAUSDT",
-      page: 2,
-      pageSize: 1,
-    })
-  ).toMatchObject({
-    categories,
-    total: 1,
-    page: 1,
-    onlineHolders: 1,
-    items: [{ symbol: "NVDAUSDT" }],
+  expect(first.groups[1].items[0]).toMatchObject({
+    nickname: "乙",
+    online: false,
+    mine: true,
   });
-  expect(
-    await viewer.perps.positionSquare({ symbol: "ETHUSDT", onlineOnly: true })
-  ).toMatchObject({
-    categories,
-    total: 0,
-    onlineHolders: 0,
-    items: [],
+  await expect(square({ pages: { invalid: 1 } })).rejects.toMatchObject({
+    code: "BAD_REQUEST",
   });
+  // Pagination never omits other contracts, and a now-empty last page is clamped.
+  const extra = db
+    .insert(users)
+    .values(
+      Array.from({ length: 21 }, (_, i) => ({
+        linuxdoId: "square-paging-" + i,
+        username: "paging-" + i,
+        groupName: "持仓玩家" + i,
+      }))
+    )
+    .returning()
+    .all();
+  for (const player of extra)
+    insert.run(player.id, "BTCUSDT", now, now, now + 555555);
+  const paged = await square({ pages: { BTCUSDT: 2 } });
   expect(
-    await viewer.perps.positionSquare({ symbol: "DOGEUSDT" })
-  ).toMatchObject({
-    categories,
-    total: 0,
-    items: [],
-  });
-  await expect(
-    viewer.perps.positionSquare({ symbol: "invalid" })
-  ).rejects.toMatchObject({ code: "BAD_REQUEST" });
-  // Only price the rows requested, and reuse a single quote when users hold the same symbol.
+    paged.groups.map(g => [g.symbol, g.page, g.totalPages, g.items.length])
+  ).toEqual([
+    ["BTCUSDT", 2, 2, 2],
+    ["ETHUSDT", 1, 1, 1],
+    ["NVDAUSDT", 1, 1, 1],
+  ]);
+  const erase = db.$client.prepare(
+    "DELETE FROM perp_positions WHERE user_id=?"
+  );
+  for (const player of extra) erase.run(player.id);
+  expect((await square({ pages: { BTCUSDT: 2 } })).groups[0].page).toBe(1);
+
+  // Two users with the same contract reuse a quote; an old quote will not value a newer position.
   insert.run(b.id, "BTCUSDT", now, now + 1, now + 555555);
   db.$client
     .prepare("UPDATE perp_positions SET side=? WHERE user_id=? AND symbol=?")
     .run("short", b.id, "BTCUSDT");
-  expect(
-    (await viewer.perps.positionSquare({ symbol: "BTCUSDT" })).items
-  ).toMatchObject([
+  expect((await square({})).groups[0].items).toMatchObject([
     { nickname: "乙", side: "short", markPriceUnits: null, pnlUnits: null },
     { nickname: "甲", side: "long", markPriceUnits: 110_000, pnlUnits: 10_000 },
   ]);
   bybit.mockClear();
   vi.setSystemTime(now + 5_000);
   markPrice = "95";
-  expect(
-    (await viewer.perps.positionSquare({ symbol: "BTCUSDT" })).items
-  ).toMatchObject([
+  expect((await square({})).groups[0].items).toMatchObject([
     { nickname: "乙", side: "short", markPriceUnits: 95_000, pnlUnits: 5_000 },
     { nickname: "甲", side: "long", markPriceUnits: 95_000, pnlUnits: -5_000 },
   ]);
-  expect(bybit).toHaveBeenCalledTimes(1);
-  expect(bybit.mock.calls[0][0].pathname).toBe("/v5/market/tickers");
+  expect(
+    bybit.mock.calls.filter(([url]) => url.pathname.endsWith("/tickers"))
+  ).toHaveLength(1);
   offline = true;
   vi.setSystemTime(now + 10_000);
-  expect(
-    await viewer.perps.positionSquare({ symbol: "BTCUSDT" })
-  ).toMatchObject({
+  expect((await square({})).groups[0]).toMatchObject({
     total: 2,
     items: [
       { markPriceUnits: null, pnlUnits: null },
       { markPriceUnits: null, pnlUnits: null },
     ],
   });
-  db.$client
-    .prepare("DELETE FROM perp_positions WHERE user_id=? AND symbol=?")
-    .run(b.id, "BTCUSDT");
-  vi.setSystemTime(now + 90000);
-  expect((await viewer.perps.positionSquare({ onlineOnly: true })).total).toBe(
-    0
-  );
-  expect(
-    (await viewer.perps.positionSquare({})).items.find(r => r.mine)?.nickname
-  ).toBe("乙");
+  vi.setSystemTime(now + 90_000);
+  expect((await square({})).onlineHolders).toBe(0);
   await caller(ta).perps.heartbeat();
-  expect((await viewer.perps.positionSquare({ onlineOnly: true })).total).toBe(
-    2
-  );
-  db.$client.prepare("DELETE FROM perp_positions WHERE user_id=?").run(a.id);
-  expect(await viewer.perps.positionSquare({})).toMatchObject({
-    total: 1,
-    categories: [{ symbol: "ETHUSDT", total: 1 }],
-    onlineHolders: 0,
-  });
+  expect((await square({})).onlineHolders).toBe(1);
+  erase.run(a.id);
+  expect((await square({})).groups.map(g => g.symbol)).toEqual([
+    "BTCUSDT",
+    "ETHUSDT",
+  ]);
+  erase.run(b.id);
+  expect(await square({})).toEqual({ groups: [], onlineHolders: 0 });
 });
