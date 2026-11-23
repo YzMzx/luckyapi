@@ -40,17 +40,3 @@ export function changePerpCash(
   ).run(userId, next);
   return Number(next);
 }
-
-export function sumPerpCash(db: Db): bigint {
-  // SQLite SUM of integers can overflow its signed 64-bit accumulator; TOTAL
-  // converts to floating point. Accumulate exactly instead.
-  let sum = 0n;
-  for (const value of db
-    .prepare<[], bigint>("SELECT cash_units FROM perp_wallets")
-    .safeIntegers()
-    .pluck()
-    .iterate()) {
-    sum += cashUnits(value);
-  }
-  return sum;
-}

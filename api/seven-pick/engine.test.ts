@@ -37,7 +37,7 @@ const NOW = Date.UTC(2026, 10, 23, 15, 59, 59); // 23:59:59 Beijing
 const EFFECTIVE = NOW + 1000;
 const HOUR = 3_600_000;
 const OPENS = EFFECTIVE + 13 * HOUR;
-const MIN_LIMIT = 50_000_000;
+const LEGACY_LIMIT = 50_000_000;
 const A = [1, 2, 3, 4, 5, 6, 7];
 const B = [1, 2, 3, 4, 5, 6, 32];
 const group = (id: number) => [1, 2, 3, 4, 5, 6, id];
@@ -82,16 +82,48 @@ function setCash(db: Database.Database, userId: number, units: number) {
   ).run(userId, units);
 }
 
-function makeRound(db: Database.Database, limit = 20 * MIN_LIMIT, open = true) {
+function makeRound(db: Database.Database, open = true) {
   saveSevenPickConfig(db, config(db), NOW);
   setCash(db, 1, 1_000_000);
   setCash(db, 2, 1_000_000);
-  setCash(db, 3, limit * 5 - 2_000_000);
   const round = createSevenPickRound(db, OPENS, OPENS - 1);
   return open ? openSevenPickRound(db, round.id, OPENS) : round;
 }
 
-function count(db: Database.Database, kind: "orders" | "bets" | "ledger") {
+function seedHistoricalRisk(
+  db: Database.Database,
+  roundId: number,
+  limitUnits: number,
+  exposureUnits: number,
+  lockedAt: number
+) {
+  db.prepare(
+    "INSERT INTO seven_pick_risk(round_id,limit_units,max_exposure_units,locked_at) VALUES (?,?,?,?)"
+  ).run(roundId, limitUnits, exposureUnits, lockedAt);
+}
+
+function seedHistoricalManualSkip(
+  db: Database.Database,
+  versionId: number,
+  opensAt: number
+) {
+  // Recreate an old persisted manual skip before the engine handles activation.
+  db.exec(
+    `CREATE TEMP TRIGGER seed_manual_skip AFTER INSERT ON seven_pick_manual_rounds
+      BEGIN
+        INSERT INTO seven_pick_risk(round_id,limit_units,max_exposure_units,locked_at)
+        VALUES (NEW.round_id,${LEGACY_LIMIT - 1},0,${opensAt});
+        UPDATE seven_pick_rounds SET status='risk_skipped' WHERE id=NEW.round_id;
+      END;`
+  );
+  try {
+    return startManualSevenPickRound(db, versionId, opensAt);
+  } finally {
+    db.exec("DROP TRIGGER seed_manual_skip");
+  }
+}
+
+function count(db: Database.Database, kind: "orders" | "bets" | "ledger" | "risk") {
   return db
     .prepare<[], number>("SELECT count(*) FROM seven_pick_" + kind)
     .pluck()
@@ -282,14 +314,32 @@ describe("七星寻宝 configuration and locked snapshot", () => {
     expect(sevenPickConfigInput.safeParse(input).success).toBe(true);
   });
 
-  it("locks exactly floor(total available cash × 20%) once and resumes skipped refunds without opening", () => {
-    const scheduled = makeRound(db, MIN_LIMIT - 1, false);
-    setCash(db, 3, (MIN_LIMIT - 1) * 5 - 2_000_000 + 4);
-    expect(() => openSevenPickRound(db, scheduled.id, OPENS - 1)).toThrow(
-      expect.objectContaining({ code: "ROUND_CLOSED" })
-    );
-    expect(getSevenPickRound(db, scheduled.id)?.riskLimitUnits).toBeNull();
-    // Simulate an anomalous pre-activation stake persisted during recovery.
+  it.each([null, 0])(
+    "opens a pre-created scheduled round with zero cash and historical limit %s",
+    limit => {
+      saveSevenPickConfig(db, config(db), NOW);
+      const scheduled = createSevenPickRound(db, OPENS, OPENS - 1);
+      if (limit !== null)
+        seedHistoricalRisk(db, scheduled.id, limit, 0, OPENS - 1);
+      expect(() => openSevenPickRound(db, scheduled.id, OPENS - 1)).toThrow(
+        expect.objectContaining({ code: "ROUND_CLOSED" })
+      );
+      expect(openSevenPickRound(db, scheduled.id, OPENS)).toMatchObject({
+        status: "open",
+        riskLimitUnits: limit?.toString() ?? null,
+        maxExposureUnits: limit === null ? null : "0",
+      });
+      expect(count(db, "risk")).toBe(limit === null ? 0 : 1);
+    }
+  );
+
+  it("retries historical skipped refunds without reopening and never refunds twice", () => {
+    ensureSevenPickLifecycleSchema(db);
+    const scheduled = makeRound(db, false);
+    // Simulate a legacy terminal round with an anomalous stake and incomplete refund.
+    seedHistoricalRisk(db, scheduled.id, LEGACY_LIMIT - 1, 0, OPENS);
+    db.prepare("UPDATE seven_pick_rounds SET status='risk_skipped' WHERE id=?")
+      .run(scheduled.id);
     db.transaction(() => {
       db.prepare(
         "INSERT INTO seven_pick_orders VALUES (17,?,1,'anomaly',?,1000,?)"
@@ -320,8 +370,11 @@ describe("七星寻宝 configuration and locked snapshot", () => {
       "injected refund fault"
     );
     const skipped = getSevenPickRound(db, scheduled.id);
-    expect(skipped?.status).toBe("risk_skipped");
-    expect(skipped?.riskLimitUnits).toBe(String(MIN_LIMIT - 201));
+    expect(skipped).toMatchObject({
+      status: "risk_skipped",
+      riskLimitUnits: String(LEGACY_LIMIT - 1),
+      maxExposureUnits: "0",
+    });
     expect(readSevenPickCash(db, 1)).toBe(999_000);
     expect(count(db, "ledger")).toBe(1);
     db.exec("DROP TRIGGER fail_refund");
@@ -346,7 +399,7 @@ describe("七星寻宝 configuration and locked snapshot", () => {
 describe("automatic round scheduling after config activation", () => {
   it("keeps locked scheduled windows, skips overlapping slots, and creates later slots at the exact close", async () => {
     ensureSevenPickLifecycleSchema(db);
-    const existing = makeRound(db, MIN_LIMIT, false);
+    const existing = makeRound(db, false);
     const m = 13 * 60;
     const input = { ...config(db), openMinutes: [m - 1, m + 10], maxStakeUnits: 41_000 };
     const selected = saveSevenPickConfig(db, input, OPENS - 3 * MINUTE_MS);
@@ -374,8 +427,11 @@ describe("automatic round scheduling after config activation", () => {
   it.each(["open", "risk_skipped"] as const)("honors manual %s window reservations after activation", async status => {
     ensureSevenPickLifecycleSchema(db);
     const old = saveSevenPickConfig(db, { ...config(db), openMinutes: [14 * 60] }, NOW);
-    if (status === "open") setCash(db, 1, MIN_LIMIT * 5);
-    const manual = startManualSevenPickRound(db, old.id!, OPENS - MINUTE_MS + 1);
+    const start = OPENS - MINUTE_MS + 1;
+    const manual =
+      status === "open"
+        ? startManualSevenPickRound(db, old.id!, start)
+        : seedHistoricalManualSkip(db, old.id!, start);
     expect(manual.status).toBe(status);
     const selected = saveSevenPickConfig(db, { ...config(db), openMinutes: [13 * 60] }, manual.opensAt + 1);
     const active = activateSevenPickConfig(db, selected.id!, manual.opensAt + 2)!;
@@ -393,7 +449,6 @@ describe("automatic round scheduling after config activation", () => {
     const selected = saveSevenPickConfig(db, { ...config(db), openMinutes: [10] }, NOW);
     const pending = saveSevenPickConfig(db, { ...config(db), openMinutes: [0, 30] }, midnight - HOUR);
     const reserved = createSevenPickRound(db, midnight, midnight - 2);
-    setCash(db, 1, MIN_LIMIT * 5);
     const active = activateSevenPickConfig(db, selected.id!, midnight - 1)!;
     expect(getNextSevenPickConfig(db, midnight - 1)).toBeNull();
     expect(getSevenPickConfig(db, midnight)).toEqual(active);
@@ -427,7 +482,7 @@ describe("manual seven-pick rounds", () => {
       { ...input, maxStakeUnits: 5_000 },
       MANUAL_START
     );
-    setCash(db, 1, MIN_LIMIT * 5);
+    setCash(db, 1, 1_000);
     expect(getSevenPickManualStartBlock(db, MANUAL_START)).toBeNull();
     expect(() => startManualSevenPickRound(db, next.id!, MANUAL_START)).toThrow(
       expect.objectContaining({ code: "CONFLICT" })
@@ -444,8 +499,8 @@ describe("manual seven-pick rounds", () => {
       minStakeUnits: active.minStakeUnits,
       maxStakeUnits: active.maxStakeUnits,
       items: active.items,
-      riskLimitUnits: String(MIN_LIMIT),
-      maxExposureUnits: "0",
+      riskLimitUnits: null,
+      maxExposureUnits: null,
     });
     expect(round.quicknetRound).toBe(quicknetRoundAtOrAfter(round.drawAt));
     expect(getSevenPickSnapshot(db, MANUAL_START)).toMatchObject({
@@ -465,6 +520,7 @@ describe("manual seven-pick rounds", () => {
         MANUAL_START
       )
     ).toMatchObject({ roundId: round.id, createdAt: MANUAL_START });
+    expect(count(db, "risk")).toBe(0);
     expect(getSevenPickConfig(db, MIDNIGHT)).toEqual(next);
   });
 
@@ -487,7 +543,6 @@ describe("manual seven-pick rounds", () => {
 
   it("checks configured betting slots even before maintenance materializes them and allows exact boundaries", () => {
     const active = saveSevenPickConfig(db, config(db), NOW);
-    setCash(db, 1, MIN_LIMIT * 5);
     const closeDelay = active.closeAfterMinutes * MINUTE_MS;
     for (const time of [
       OPENS - closeDelay + 1,
@@ -534,7 +589,6 @@ describe("manual seven-pick rounds", () => {
     ensureSevenPickLifecycleSchema(db);
     const active = saveSevenPickConfig(db, config(db), NOW);
     const start = MIDNIGHT - active.closeAfterMinutes * MINUTE_MS;
-    setCash(db, 1, MIN_LIMIT * 5);
     expect(getSevenPickManualStartBlock(db, start + 1)).toMatch(/午夜/);
     const early = { ...config(db), openMinutes: [0] };
     saveSevenPickConfig(db, early, start - 1);
@@ -569,19 +623,18 @@ describe("manual seven-pick rounds", () => {
     expect(noNetwork).not.toHaveBeenCalled();
   });
 
-  it("retains skipped attempts and their risk lock without displacing the previous public selection", () => {
+  it("retains historical manual skips without displacing the previous public selection", () => {
     const previous = makeRound(db);
     const start = previous.closesAt;
-    setCash(db, 3, (MIN_LIMIT - 1) * 5 - 2_000_000);
     expect(getSevenPickManualStartBlock(db, start)).toBeNull();
-    const skipped = startManualSevenPickRound(
+    const skipped = seedHistoricalManualSkip(
       db,
       previous.configVersionId,
       start
     );
     expect(skipped).toMatchObject({
       status: "risk_skipped",
-      riskLimitUnits: String(MIN_LIMIT - 1),
+      riskLimitUnits: String(LEGACY_LIMIT - 1),
       maxExposureUnits: "0",
     });
     expect(getSevenPickRound(db, skipped.id)).toEqual(skipped);
@@ -595,7 +648,6 @@ describe("manual seven-pick rounds", () => {
     expect(() =>
       startManualSevenPickRound(db, previous.configVersionId, start)
     ).toThrow(expect.objectContaining({ code: "CONFLICT" }));
-    setCash(db, 3, MIN_LIMIT * 5);
     const retry = startManualSevenPickRound(
       db,
       previous.configVersionId,
@@ -610,14 +662,25 @@ describe("manual seven-pick rounds", () => {
     });
   });
 
-  it("rolls back unexpected risk errors instead of returning a skipped result", () => {
+  it("opens a manual round with no cash and does not create a risk row", () => {
+    const active = saveSevenPickConfig(db, config(db), NOW);
+    expect(startManualSevenPickRound(db, active.id!, MANUAL_START)).toMatchObject({
+      status: "open",
+      riskLimitUnits: null,
+      maxExposureUnits: null,
+    });
+    expect(count(db, "risk")).toBe(0);
+  });
+
+  it("rolls back the manual snapshot and marker if opening fails", () => {
     const active = saveSevenPickConfig(db, config(db), NOW);
     db.exec(
-      "CREATE TRIGGER fail_risk BEFORE INSERT ON seven_pick_risk BEGIN SELECT RAISE(ABORT, 'injected risk fault'); END;"
+      "CREATE TRIGGER fail_open BEFORE UPDATE OF status ON seven_pick_rounds " +
+        "WHEN NEW.status='open' BEGIN SELECT RAISE(ABORT, 'injected open fault'); END;"
     );
     expect(() =>
       startManualSevenPickRound(db, active.id!, MANUAL_START)
-    ).toThrow("injected risk fault");
+    ).toThrow("injected open fault");
     expect(db.prepare("SELECT 1 FROM seven_pick_rounds").get()).toBeUndefined();
     expect(
       db.prepare("SELECT 1 FROM seven_pick_manual_rounds").get()
@@ -633,7 +696,6 @@ describe("manual seven-pick rounds", () => {
       init(left);
       right.pragma("foreign_keys = ON");
       const active = saveSevenPickConfig(left, config(left), NOW);
-      setCash(left, 1, MIN_LIMIT * 5);
       left
         .transaction(() => {
           const round = startManualSevenPickRound(
@@ -784,33 +846,57 @@ describe("atomic seven-pick order placement", () => {
     expect(count(db, "orders")).toBe(2);
   });
 
-  it("accepts exactly the locked limit and leaves the ledger and prior order intact on risk rejection", () => {
-    const { id } = makeRound(db, MIN_LIMIT);
-    setCash(db, 3, 999_999_999); // Must not change a previously locked limit.
-    placeSevenPickOrderForTest(
+  it("accepts orders above the old 20% cap with no risk row, even with only enough cash for the stake", () => {
+    saveSevenPickConfig(db, config(db), NOW);
+    const scheduled = createSevenPickRound(db, OPENS, OPENS - 1);
+    const round = openSevenPickRound(db, scheduled.id, OPENS);
+    setCash(db, 1, 1_000);
+    const placed = placeSevenPickOrder(
       db,
       1,
-      { roundId: id, requestKey: "first", bets: [bet()] },
+      { roundId: round.id, requestKey: "uncapped", bets: [bet()] },
       OPENS
     );
-    expect(getSevenPickRound(db, id)).toMatchObject({
-      riskLimitUnits: String(MIN_LIMIT),
-      maxExposureUnits: String(MIN_LIMIT),
+    expect(placed.totalStakeUnits * round.multipliers[7]).toBeGreaterThan(200);
+    expect(readSevenPickCash(db, 1)).toBe(0);
+    expect(getSevenPickRound(db, round.id)).toMatchObject({
+      riskLimitUnits: null,
+      maxExposureUnits: null,
     });
-    expect(() =>
-      placeSevenPickOrderForTest(
-        db,
-        2,
-        { roundId: id, requestKey: "second", bets: [bet(B)] },
-        OPENS
-      )
-    ).toThrow(expect.objectContaining({ code: "RISK_LIMIT" }));
-    expect(count(db, "bets")).toBe(1);
-    expect(count(db, "ledger")).toBe(1);
-    expect(readSevenPickCash(db, 2)).toBe(1_000_000);
-    expect(openSevenPickRound(db, id, OPENS + 1).riskLimitUnits).toBe(
-      String(MIN_LIMIT)
+    expect(count(db, "risk")).toBe(0);
+  });
+
+  it("accepts bets above the private exposure cap on an already-open legacy round without rewriting history", () => {
+    const round = makeRound(db);
+    const first = placeSevenPickOrder(
+      db,
+      1,
+      { roundId: round.id, requestKey: "first", bets: [bet()] },
+      OPENS
     );
+    expect(first.totalStakeUnits * round.multipliers[7]).toBe(LEGACY_LIMIT);
+    seedHistoricalRisk(db, round.id, LEGACY_LIMIT, LEGACY_LIMIT, OPENS);
+    const riskRows = () => db.prepare("SELECT * FROM seven_pick_risk").all();
+    const historical = riskRows();
+    const second = placeSevenPickOrder(
+      db,
+      2,
+      { roundId: round.id, requestKey: "second", bets: [bet()] },
+      OPENS + 1
+    );
+    // Both identical combinations can win together, doubling the old limit.
+    expect(
+      (first.totalStakeUnits + second.totalStakeUnits) * round.multipliers[7]
+    ).toBe(2 * LEGACY_LIMIT);
+    expect(count(db, "bets")).toBe(2);
+    expect(count(db, "ledger")).toBe(2);
+    expect(readSevenPickCash(db, 2)).toBe(999_000);
+    expect(riskRows()).toEqual(historical);
+    expect(getSevenPickRound(db, round.id)).toMatchObject({
+      status: "open",
+      riskLimitUnits: String(LEGACY_LIMIT),
+      maxExposureUnits: String(LEGACY_LIMIT),
+    });
   });
 
   it("rolls back every bet and its debit if a later debit fails", () => {
@@ -827,7 +913,7 @@ describe("atomic seven-pick order placement", () => {
       "injected"
     );
     expect(readSevenPickCash(db, 1)).toBe(1_000_000);
-    expect(getSevenPickRound(db, id)?.maxExposureUnits).toBe("0");
+    expect(count(db, "risk")).toBe(0);
     expect([
       count(db, "orders"),
       count(db, "bets"),

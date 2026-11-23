@@ -6,7 +6,6 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import {
   SevenPickInsufficientFundsError,
   applySevenPickCash,
-  getSevenPickRiskLimitUnits,
   readSevenPickCash,
   type SevenPickCashChange,
 } from "../seven-pick/wallet";
@@ -176,19 +175,12 @@ it("does not permit competing SQLite connections to spend the same shared balanc
   }
 });
 
-it("floors the cash-only risk limit without floating-point loss and rejects unsafe totals", () => {
-  event("in", 1004);
-  expect(getSevenPickRiskLimitUnits(db)).toBe(200);
-  db.transaction(() => {
-    changePerpCash(db, 1, Number.MAX_SAFE_INTEGER - 1004);
-    changePerpCash(db, 2, Number.MAX_SAFE_INTEGER);
-  }).immediate();
-  expect(getSevenPickRiskLimitUnits(db)).toBe(
-    Number((2n * BigInt(Number.MAX_SAFE_INTEGER)) / 5n)
-  );
+it("rejects a credit that would overflow a shared wallet", () => {
+  db.transaction(() => changePerpCash(db, 1, Number.MAX_SAFE_INTEGER)).immediate();
   expect(() =>
     db.transaction(() => changePerpCash(db, 1, 1)).immediate()
   ).toThrow("超出有效范围");
+  expect(readSevenPickCash(db, 1)).toBe(Number.MAX_SAFE_INTEGER);
 });
 
 it("uses game cash for cross-week equity and redemptions but never attributes it to trading PnL", () => {

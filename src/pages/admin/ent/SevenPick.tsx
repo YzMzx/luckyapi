@@ -202,7 +202,7 @@ function ManualRound({ active, block }: { active: ActiveConfig; block: string | 
   return <section className="space-y-2 rounded-xl border border-border bg-card p-4">
     <h2 className="font-bold">手动开场</h2>
     <p className="text-sm text-muted-foreground">用当前生效配置立即尝试开启一场，不修改自动排期，也不会提前启用次日版本。</p>
-    <p id={availabilityId} className="text-sm">{start.isPending ? "正在提交并刷新场次状态。" : block ? "暂不可开启：" + block : "当前可手动开场，开盘仍需通过风控检查。"}</p>
+    <p id={availabilityId} className="text-sm">{start.isPending ? "正在提交并刷新场次状态。" : block ? "暂不可开启：" + block : "当前可手动开场。"}</p>
     <button type="button" aria-haspopup="dialog" aria-describedby={availabilityId} aria-disabled={Boolean(block) || start.isPending}
       className="admin-primary px-5 py-2 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
       onClick={() => {
@@ -215,7 +215,7 @@ function ManualRound({ active, block }: { active: ActiveConfig; block: string | 
     <dialog ref={dialog} aria-labelledby={titleId} aria-describedby={summaryId}
       className="m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-xl border border-border bg-card p-5 text-card-foreground [&:modal]:overscroll-contain backdrop:bg-black/60 backdrop:overflow-hidden backdrop:overscroll-contain">
       <h3 id={titleId} className="mb-2 text-lg font-bold">确认立即开启场次？</h3>
-      <p id={summaryId} className="text-sm">将使用当前生效的版本 #{confirmedConfig?.id}，通过风控后立即对用户开放投注。待生效版本不会用于本场。</p>
+      <p id={summaryId} className="text-sm">将使用当前生效的版本 #{confirmedConfig?.id}，确认后立即开放本场投注。待生效版本不会用于本场。</p>
       {confirmedConfig && <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
         <Setting label="版本生效（北京时间）"><BeijingTime timestamp={confirmedConfig.effectiveAt} /></Setting>
         <Setting label="每组限额（模拟 USDT）">{unitsText(confirmedConfig.minStakeUnits)}–{unitsText(confirmedConfig.maxStakeUnits)}</Setting>
@@ -480,8 +480,9 @@ export default function AdminSevenPick() {
       <ConfigForm key={(template.id ?? "default") + ":" + (latest.id ?? "default")} template={template} expectedVersionId={latest.id} headingId={scheduleHeadingId} />
     </section>
     <section className="space-y-2 rounded-xl border border-border bg-card p-4">
-      <h2 className="font-bold">场次风控</h2>
-      {rounds.length ? <ul className="space-y-2 text-sm">{rounds.map((round) => <li key={round.id}>第 {round.id} 场 · {roundStatus[round.status]} · 最大潜在返还 / 风控上限：{round.maxExposureUnits ?? "—"} / {round.riskLimitUnits ?? "—"} milli-USDT</li>)}</ul> : <p className="text-sm text-muted-foreground">暂无正式场次。</p>}
+      <h2 className="font-bold">场次记录</h2>
+      <p className="text-sm text-muted-foreground">不再限制单场总返还。旧场次的「风控跳过」状态保留，不会重新开放。</p>
+      {rounds.length ? <ul className="space-y-2 text-sm">{rounds.map((round) => <li key={round.id}>第 {round.id} 场 · {roundStatus[round.status]} · <BeijingTime timestamp={round.opensAt} /> 开盘（北京时间）</li>)}</ul> : <p className="text-sm text-muted-foreground">暂无正式场次。</p>}
     </section>
     <RoundAudit rounds={rounds} />
   </div>;

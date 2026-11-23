@@ -60,17 +60,22 @@ it("requires admin control, ignores retired env flags and immediately pauses or 
   vi.setSystemTime(opensAt - 1000);
   const round = createSevenPickRound(db.$client, opensAt);
   expect(await guest.sevenPick.history()).toEqual([]);
-  db.$client.prepare("INSERT INTO perp_wallets (user_id,cash_units) VALUES (?,?)").run(userId, 250_000_000);
   vi.setSystemTime(opensAt);
-  expect(openSevenPickRound(db.$client, round.id).status).toBe("open");
+  expect(openSevenPickRound(db.$client, round.id)).toMatchObject({ status: "open", riskLimitUnits: null, maxExposureUnits: null });
+  expect(db.$client.prepare("SELECT count(*) FROM seven_pick_risk").pluck().get()).toBe(0);
+  db.$client.prepare("INSERT INTO perp_wallets (user_id,cash_units) VALUES (?,?)").run(userId, 1_000);
+  // Expose a legacy diagnostic row to admins, but never enforce or disclose it publicly.
+  db.$client.prepare("INSERT INTO seven_pick_risk (round_id,limit_units,max_exposure_units,locked_at) VALUES (?,?,?,?)")
+    .run(round.id, 200, 0, opensAt);
   const overview = await guest.sevenPick.overview();
   expect(overview).toMatchObject({ round: { id: round.id, status: "open" }, configured: true, paused: false, acceptingOrders: true });
   for (const result of [overview.round, await guest.sevenPick.round({ roundId: round.id }), ...(await guest.sevenPick.history())]) {
     expect(result).not.toHaveProperty("riskLimitUnits");
     expect(result).not.toHaveProperty("maxExposureUnits");
   }
-  expect((await admin.admin.sevenPick.overview()).rounds[0].riskLimitUnits).toBe("50000000");
+  expect((await admin.admin.sevenPick.overview()).rounds[0]).toMatchObject({ riskLimitUnits: "200", maxExposureUnits: "0" });
   const placed = await member.sevenPick.place({ ...wager, roundId: round.id });
+  expect(placed.totalStakeUnits * round.multipliers[7]).toBeGreaterThan(200);
   expect(await admin.admin.sevenPick.setRuntime({ key: "paused", value: true })).toEqual({ paused: true, rfc3161Enabled: true });
   expect(await guest.sevenPick.overview()).toMatchObject({ paused: true, configured: true, acceptingOrders: false });
   await expect(member.sevenPick.place({ ...wager, roundId: round.id, requestKey: "blocked-new-wager" })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
@@ -82,7 +87,7 @@ it("requires admin control, ignores retired env flags and immediately pauses or 
   const { sevenPickProofApp } = await import("../routes/sevenPickProof");
   expect((await sevenPickProofApp.request("/rounds/" + round.id + "/proof")).status).toBe(404);
   expect((await sevenPickProofApp.request("/rounds/abc/proof")).status).toBe(400);
-  expect(await member.sevenPick.account()).toEqual({ cashUnits: 249_999_000, orders: [placed] });
+  expect(await member.sevenPick.account()).toEqual({ cashUnits: 0, orders: [placed] });
   expect(db.$client.prepare("SELECT count(*) FROM seven_pick_ledger").pluck().get()).toBe(1);
   expect(db.$client.prepare("SELECT detail FROM admin_logs WHERE action='seven_pick_runtime_changed' ORDER BY id").pluck().all()
     .map(detail => JSON.parse(detail as string))).toEqual([
@@ -103,23 +108,23 @@ it("requires admin control, ignores retired env flags and immediately pauses or 
   expect((await admin.admin.sevenPick.overview()).manualStartBlock).toContain("维护");
   await expect(admin.admin.sevenPick.startManualRound({ expectedVersionId: saved.id! })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
   db.$client.prepare("DELETE FROM settings WHERE key='control_maintenance'").run();
-  // Restore sufficient risk budget after the earlier wager reduced free cash.
-  db.$client.prepare("UPDATE perp_wallets SET cash_units=250000000 WHERE user_id=?").run(userId);
   const manual = await admin.admin.sevenPick.startManualRound({ expectedVersionId: saved.id! });
-  expect(manual).toMatchObject({ status: "open", opensAt: round.closesAt + 1, configVersionId: saved.id });
+  expect(manual).toMatchObject({ status: "open", opensAt: round.closesAt + 1, configVersionId: saved.id, riskLimitUnits: null, maxExposureUnits: null });
   expect(await guest.sevenPick.overview()).toMatchObject({ round: { id: manual.id }, acceptingOrders: true });
   await expect(admin.admin.sevenPick.startManualRound({ expectedVersionId: saved.id! })).rejects.toMatchObject({ code: "CONFLICT" });
   expect(db.$client.prepare("SELECT detail FROM admin_logs WHERE action='seven_pick_manual_round_started'").pluck().all().map(detail => JSON.parse(detail as string))).toEqual([
     { adminSessionId: adminRow.id, roundId: manual.id, versionId: saved.id, status: "open", opensAt: manual.opensAt },
   ]);
 
-  // The existing risk limit is authoritative for a manual attempt, too.
+  // A new manual round can open with zero cash, but an unfunded member cannot place an order.
   vi.setSystemTime(manual.closesAt + 1);
-  db.$client.prepare("UPDATE perp_wallets SET cash_units=0").run();
-  const skipped = await admin.admin.sevenPick.startManualRound({ expectedVersionId: saved.id! });
-  expect(skipped).toMatchObject({ status: "risk_skipped", riskLimitUnits: "0" });
-  expect((await guest.sevenPick.overview()).round?.id).not.toBe(skipped.id);
-  expect((await admin.admin.sevenPick.overview()).rounds[0]).toMatchObject({ id: skipped.id, status: "risk_skipped" });
+  const unfunded = await admin.admin.sevenPick.startManualRound({ expectedVersionId: saved.id! });
+  expect(unfunded).toMatchObject({ status: "open", riskLimitUnits: null, maxExposureUnits: null });
+  expect(await guest.sevenPick.overview()).toMatchObject({ round: { id: unfunded.id }, acceptingOrders: true });
+  await expect(member.sevenPick.place({ ...wager, roundId: unfunded.id, requestKey: "unfunded" })).rejects.toMatchObject({ code: "BAD_REQUEST", message: "模拟钱包余额不足" });
+  expect(db.$client.prepare("SELECT * FROM seven_pick_risk").all()).toEqual([
+    { round_id: round.id, limit_units: 200, max_exposure_units: 0, locked_at: opensAt },
+  ]);
 
   const activate = { versionId: next.id!, expectedActiveVersionId: saved.id, expectedVersionId: next.id };
   await expect(member.admin.sevenPick.activateRule(activate)).rejects.toMatchObject({ code: "UNAUTHORIZED" });

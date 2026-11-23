@@ -115,6 +115,57 @@ describe("Quicknet-only lifecycle", () => {
     expect(() => db.exec("UPDATE seven_pick_quicknet_draws SET total_payout_units=5")).toThrow();
   });
 
+  it.each([
+    { scenario: "without a risk row", legacyLimit: null },
+    { scenario: "with a legacy cap below payout", legacyLimit: 1_000 },
+  ])("pays a verified winner $scenario", async ({ legacyLimit }) => {
+    const round = makeRound();
+    const risk = db.prepare("SELECT limit_units, max_exposure_units FROM seven_pick_risk WHERE round_id=?");
+    if (legacyLimit !== null) {
+      db.prepare("INSERT INTO seven_pick_risk (round_id,limit_units,max_exposure_units,locked_at) VALUES (?,?,?,?)")
+        .run(round.id, legacyLimit, legacyLimit, OPENS);
+    }
+    bet(round.id, 1, WINNING, "1");
+    const seal = sealSevenPickRound(db, round.id, round.closesAt);
+    const now = round.quicknetScheduledAt;
+    recordSevenPickQuicknetEvidence(db, round.id, [evidence(now)], now);
+    const expectedRisk = legacyLimit === null ? undefined : { limit_units: legacyLimit, max_exposure_units: legacyLimit };
+    expect(risk.get(round.id)).toEqual(expectedRisk);
+
+    const result = await settleSevenPickRound(db, round.id, now);
+    expect(result).toEqual({ itemIds: WINNING, quicknetRound: ROUND, randomnessHex: RANDOMNESS, signature: SIGNATURE,
+      settledAt: now, totalPayoutUnits: 50_000_000 });
+    expect(getSevenPickPublicProof(db, round.id)).toEqual({ ...seal, result });
+    expect(currentStatus(round.id)).toBe("settled");
+    expect(readSevenPickCash(db, 1)).toBe(50_999_000);
+    await expect(settleSevenPickRound(db, round.id, now + 1)).resolves.toBeNull();
+    expect(db.prepare("SELECT delta_units FROM seven_pick_ledger WHERE round_id=? AND kind='payout'").pluck().all(round.id))
+      .toEqual([50_000_000]);
+    expect(risk.get(round.id)).toEqual(expectedRisk);
+  });
+
+  it("rejects payouts that overflow a wallet balance and rolls back the round", async () => {
+    const round = makeRound();
+    bet(round.id, 1, WINNING, "1"); bet(round.id, 2, WINNING, "1");
+    sealSevenPickRound(db, round.id, round.closesAt);
+    const now = round.quicknetScheduledAt;
+    recordSevenPickQuicknetEvidence(db, round.id, [evidence(now)], now);
+    const setBalance = db.prepare("UPDATE perp_wallets SET cash_units=? WHERE user_id=2");
+    setBalance.run(Number.MAX_SAFE_INTEGER - 49_999_999);
+
+    await expect(settleSevenPickRound(db, round.id, now)).rejects.toThrow("金额、价格或数量超出有效范围");
+    expect(readSevenPickCash(db, 1)).toBe(999_000);
+    expect(readSevenPickCash(db, 2)).toBe(Number.MAX_SAFE_INTEGER - 49_999_999);
+    expect(db.prepare("SELECT COUNT(*) FROM seven_pick_ledger WHERE round_id=? AND kind='payout'").pluck().get(round.id)).toBe(0);
+    expect(currentStatus(round.id)).toBe("sealed");
+    expect(getSevenPickPublicProof(db, round.id)).toBeNull();
+
+    setBalance.run(Number.MAX_SAFE_INTEGER - 50_000_000);
+    await expect(settleSevenPickRound(db, round.id, now)).resolves.toMatchObject({ totalPayoutUnits: 100_000_000 });
+    expect(readSevenPickCash(db, 1)).toBe(50_999_000);
+    expect(readSevenPickCash(db, 2)).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
   it("never treats relays unavailable as proof for a refund", async () => {
     const round = makeRound();
     bet(round.id, 1, WINNING, "1");

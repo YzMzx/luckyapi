@@ -3,7 +3,6 @@ import {
   PerpInsufficientCashError,
   changePerpCash,
   readPerpCash,
-  sumPerpCash,
 } from "../perp/wallet";
 
 type Db = Database.Database;
@@ -20,12 +19,6 @@ export type SevenPickCashChange = {
 export class SevenPickInsufficientFundsError extends Error {}
 
 export const readSevenPickCash = readPerpCash;
-
-export function getSevenPickRiskLimitUnits(db: Db): number {
-  const limit = Number(sumPerpCash(db) / 5n);
-  if (!Number.isSafeInteger(limit)) throw new Error("七星寻宝风控额度溢出");
-  return limit;
-}
 
 export function applySevenPickCash(db: Db, input: SevenPickCashChange) {
   if (!db.inTransaction) throw new Error("七星寻宝记账需要写事务");

@@ -53,6 +53,10 @@ function assertRound(db: Db, roundId: number) {
   return round;
 }
 
+function readRoundStatus(db: Db, roundId: number) {
+  return db.prepare<[number], SevenPickRound["status"]>("SELECT status FROM seven_pick_rounds WHERE id=?").pluck().get(roundId);
+}
+
 function snapshotRound(round: SevenPickRound): SevenPickDrawSnapshot {
   return {
     id: round.id, configVersionId: round.configVersionId,
@@ -211,8 +215,7 @@ function findVerifiedBeacon(evidence: readonly QuicknetEvidence[], round: number
 
 function settleRound(db: Db, seal: SevenPickSeal, verified: NonNullable<ReturnType<typeof findVerifiedBeacon>>, now: number): SevenPickResult {
   const { roundId, snapshot } = seal;
-  const round = assertRound(db, roundId);
-  if (!hasSevenPickQuicknetSeal(db, roundId) || !["sealed", "review"].includes(round.status)) {
+  if (!hasSevenPickQuicknetSeal(db, roundId)) {
     throw new SevenPickLifecycleError("当前状态不可结算");
   }
   assertBinding(snapshot);
@@ -230,10 +233,9 @@ function settleRound(db: Db, seal: SevenPickSeal, verified: NonNullable<ReturnTy
   const draw = deriveDraw(itemIds, verified.randomness);
   const winning = new Set(draw);
   const payouts = anonymous.map(bet => BigInt(bet.stakeUnits) * BigInt(snapshot.multipliers[bet.itemIds.filter(item => winning.has(item)).length]));
+  // Keep the round total exact; applySevenPickCash also checks each delta and resulting wallet balance.
   const total = payouts.reduce((sum, units) => sum + units, 0n);
-  if (round.riskLimitUnits === null || round.maxExposureUnits === null || total > BigInt(round.riskLimitUnits) ||
-    total > BigInt(round.maxExposureUnits) || total > BigInt(Number.MAX_SAFE_INTEGER))
-    throw new SevenPickLifecycleError("结算金额超过已锁定的风控上限");
+  if (total > BigInt(Number.MAX_SAFE_INTEGER)) throw new SevenPickLifecycleError("结算金额超出安全整数范围");
   for (const [i, bet] of bets.entries()) {
     if (payouts[i] === 0n) continue;
     applySevenPickCash(db, { roundId, betId: bet.betId, userId: bet.userId, kind: "payout", deltaUnits: Number(payouts[i]), now });
@@ -254,7 +256,7 @@ export async function settleSevenPickRound(db: Db, roundId: number, now?: number
   const checkedAt = now ?? Date.now();
   assertTime(checkedAt);
   const seal = getSevenPickSealedProof(db, roundId);
-  const status = db.prepare<[number], SevenPickRound["status"]>("SELECT status FROM seven_pick_rounds WHERE id=?").pluck().get(roundId);
+  const status = readRoundStatus(db, roundId);
   if (!seal || !hasSevenPickQuicknetSeal(db, roundId) || checkedAt < seal.snapshot.quicknetScheduledAt ||
     !["sealed", "review"].includes(status ?? "")) return null;
   if (seal.sealedAt >= seal.snapshot.quicknetScheduledAt) {
@@ -264,8 +266,8 @@ export async function settleSevenPickRound(db: Db, roundId: number, now?: number
   const beacon = findVerifiedBeacon(readSevenPickQuicknetEvidence(db, roundId), seal.snapshot.quicknetRound);
   if (!beacon) return null;
   return db.transaction(() => {
-    const round = assertRound(db, roundId);
-    if (!["sealed", "review"].includes(round.status)) return null;
+    const status = readRoundStatus(db, roundId);
+    if (status !== "sealed" && status !== "review") return null;
     return settleRound(db, seal, beacon, now ?? Date.now());
   }).immediate();
 }

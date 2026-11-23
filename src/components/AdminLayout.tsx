@@ -21,7 +21,7 @@ const sections: SideNavSection[] = [
 const meta: Record<string, [string, string]> = {
   "/admin/contracts-positions": ["合约持仓", "全站当前未平仓合约与逐仓估值（只读）"],
   "/admin/contracts-settings": ["模拟合约", "Bybit 永续合约、开仓开关与风险限额"],
-  "/admin/entertainment/seven-pick": ["七星寻宝", "物品、赔率、次日配置和场次风控"],
+  "/admin/entertainment/seven-pick": ["七星寻宝", "物品、返还倍率、规则和场次记录"],
   "/admin/levels": ["等级系统", "站内等级门槛与限定铭牌授予记录"],
   "/admin": ["总览", "核心指标与趋势"], "/admin/control": ["控制中心", "维护模式、业务模块开关与操作审计"], "/admin/users": ["用户管理", "站内等级、余额、密钥、调用记录与用户权限"], "/admin/groups": ["分组", "计费倍率与 RPM 限流"], "/admin/invites": ["邀请 / 兑换码", "生成、使用状态和归档"], "/admin/channels": ["上游渠道", "当前单上游地址、密钥与连通性"], "/admin/models": ["模型与定价", "模型协议、价格和分组权限"], "/admin/monitoring": ["调用监控", "客户调用、扣费、延迟和单上游健康"], "/admin/usage": ["调用日志", "请求、响应、计费和错误明细"], "/admin/finance-settings": ["金融规则", "转账和借贷全局边界，新合同规则快照"], "/admin/loans": ["借贷审计", "合同、应计金额、追缴状态与台账"], "/admin/entertainment": ["娱乐总览", "业务日、活动和资金概览"], "/admin/entertainment/draw": ["一次性抽奖", "概率、奖励、预算与参与审计"], "/admin/entertainment/slot": ["老虎机运营", "次数、赔付规则、RTP、风险金、活动、版本与流水"], "/admin/entertainment/signin": ["每日签到", "奖励模式、预算与签到审计"], "/admin/entertainment/video-reward": ["视频红包", "观看验证、预算、基金和领取审计"], "/admin/arena": ["决斗场", "玩法配置、资金池、房间和结算"], "/admin/announcements": ["公告", "发布窗口、置顶和撤回"], "/admin/auth-settings": ["OAuth 与管理员安全", "单一登录入口、回调检查与管理员凭据"], "/admin/logs": ["操作日志", "后台关键操作留痕"],
 };

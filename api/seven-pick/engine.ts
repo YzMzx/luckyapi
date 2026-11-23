@@ -17,14 +17,9 @@ import {
 } from "./config";
 import { QUICKNET, quicknetRoundAtOrAfter, quicknetRoundTimeMs } from "./drand";
 import { DRAW_ALGORITHM_VERSION } from "./draw";
-import {
-  calculateSevenPickMaxExposure,
-  sevenPickItemMask,
-  type SevenPickRiskBet,
-} from "./risk";
+import { sevenPickItemMask } from "./risk";
 import {
   applySevenPickCash,
-  getSevenPickRiskLimitUnits,
   readSevenPickCash,
   SevenPickInsufficientFundsError,
 } from "./wallet";
@@ -41,8 +36,7 @@ export class SevenPickError extends Error {
     | "IDEMPOTENCY_CONFLICT"
     | "DUPLICATE_COMBINATION"
     | "BET_LIMIT"
-    | "INSUFFICIENT_FUNDS"
-    | "RISK_LIMIT";
+    | "INSUFFICIENT_FUNDS";
 
   constructor(code: SevenPickError["code"], message: string) {
     super(message);
@@ -97,7 +91,10 @@ const SELECT_ROUND =
   "quicknet_scheme AS quicknetScheme,algorithm_version AS algorithmVersion,min_stake_units AS minStakeUnits, " +
   "max_stake_units AS maxStakeUnits,multipliers_json AS multipliersJson FROM seven_pick_rounds";
 
-function readRisk(db: Database.Database, roundId: number): RiskRow | undefined {
+function readHistoricalRisk(
+  db: Database.Database,
+  roundId: number
+): RiskRow | undefined {
   const risk = db
     .prepare<[number], RiskRow>(
       "SELECT limit_units AS limitUnits,max_exposure_units AS maxExposureUnits FROM seven_pick_risk WHERE round_id=?"
@@ -128,7 +125,8 @@ function roundView(db: Database.Database, row: RoundRow): SevenPickRound {
     .all(row.id);
   if (items.length !== SEVEN_PICK_ITEMS)
     throw new Error("七星寻宝场次物品快照不完整");
-  const risk = readRisk(db, row.id);
+  // Legacy risk data is retained for diagnostics, not for opening or betting decisions.
+  const risk = readHistoricalRisk(db, row.id);
   return {
     id: row.id,
     configVersionId: row.configVersionId,
@@ -164,8 +162,8 @@ export function getSevenPickRound(
   })();
 }
 
-// Keep rejected manual attempts in round history, but do not let them take
-// over the public overview's current, next, or most recent round slot.
+// Keep historically rejected manual attempts in round history, but exclude them
+// from the public overview's current, next, and most recent round slots.
 const PUBLIC_SNAPSHOT_FILTER =
   "(status<>'risk_skipped' OR NOT EXISTS (SELECT 1 FROM seven_pick_manual_rounds m WHERE m.round_id=seven_pick_rounds.id))";
 
@@ -400,7 +398,7 @@ function checkManualStart(
   return { config: { ...config, id: config.id }, block: null };
 }
 
-/** Returns the current non-risk blocker, if any. Risk is evaluated at activation. */
+/** Returns the current blocker, if any. */
 export function getSevenPickManualStartBlock(
   db: Database.Database,
   nowMs = Date.now()
@@ -410,7 +408,7 @@ export function getSevenPickManualStartBlock(
   )();
 }
 
-/** Create and activate an immutable round now, persisting both open and risk_skipped results. */
+/** Create and open an immutable round now. */
 export function startManualSevenPickRound(
   db: Database.Database,
   expectedVersionId: number,
@@ -435,14 +433,6 @@ export function startManualSevenPickRound(
       return openSevenPickRound(db, roundId, nowMs);
     })
     .immediate();
-}
-
-function readRoundBets(db: Database.Database, roundId: number) {
-  return db
-    .prepare<[number], SevenPickRiskBet>(
-      "SELECT item_mask AS itemMask, stake_units AS stakeUnits FROM seven_pick_bets WHERE round_id=?"
-    )
-    .iterate(roundId);
 }
 
 function refundSkippedBets(
@@ -470,7 +460,7 @@ function refundSkippedBets(
 }
 
 // Activation runs once, in the same serialized DB stream as wallet writes.
-// Re-running on a risk-skipped round only resumes anomaly refunds, never reopens it.
+// A historical risk-skipped round is terminal; retrying only resumes anomaly refunds.
 export function openSevenPickRound(
   db: Database.Database,
   roundId: number,
@@ -489,43 +479,14 @@ export function openSevenPickRound(
       assertSevenPickNotPaused(db);
       if (!round.enabled || nowMs < round.opensAt || nowMs >= round.closesAt)
         throw new SevenPickError("ROUND_CLOSED", "场次不在开盘时段");
-      const odds = readMultipliers(round);
-      const savedRisk = readRisk(db, roundId);
-      const limitUnits =
-        savedRisk?.limitUnits ?? getSevenPickRiskLimitUnits(db);
-      const skipped =
-        BigInt(limitUnits) <
-        BigInt(round.minStakeUnits) * BigInt(odds[SEVEN_PICK_SIZE]);
-      if (!savedRisk) {
-        db.prepare(
-          "INSERT INTO seven_pick_risk(round_id,limit_units,max_exposure_units,locked_at) VALUES (?,?,0,?)"
-        ).run(roundId, limitUnits, nowMs);
-      }
-      if (skipped) {
-        db.prepare(
-          "UPDATE seven_pick_rounds SET status='risk_skipped' WHERE id=?"
-        ).run(roundId);
-      } else {
-        const currentExposure = calculateSevenPickMaxExposure(
-          readRoundBets(db, roundId),
-          odds
-        );
-        if (currentExposure > BigInt(limitUnits))
-          throw new SevenPickError("RISK_LIMIT", "场次已有投注超过风控额度");
-        db.prepare(
-          "UPDATE seven_pick_risk SET max_exposure_units=? WHERE round_id=?"
-        ).run(Number(currentExposure), roundId);
-        db.prepare("UPDATE seven_pick_rounds SET status='open' WHERE id=?").run(
-          roundId
-        );
-      }
+      db.prepare("UPDATE seven_pick_rounds SET status='open' WHERE id=?").run(
+        roundId
+      );
       return roundView(db, select.get(roundId)!);
     })
     .immediate();
   if (activated.status === "risk_skipped") {
-    // Persist the no-open decision independently: a ledger failure must not
-    // let a later wallet top-up reopen this round. Retrying activation resumes
-    // the refund; the same transaction couples each cash change to its journal.
+    // Retry legacy anomaly refunds atomically with their wallet changes.
     db.transaction(() => refundSkippedBets(db, roundId, nowMs)).immediate();
   }
   return activated;
@@ -773,24 +734,7 @@ function placeOrder(
           throw new SevenPickError("BET_LIMIT", "每场最多投注五组");
         if (readSevenPickCash(db, userId) < totalStakeUnits)
           throw new SevenPickError("INSUFFICIENT_FUNDS", "模拟钱包余额不足");
-        const risk = readRisk(db, roundId);
-        if (!risk)
-          throw new SevenPickError("ROUND_CLOSED", "场次尚未锁定风控额度");
-        const all = function* () {
-          yield* readRoundBets(db, roundId);
-          yield* bets;
-        };
-        const exposure = calculateSevenPickMaxExposure(
-          all(),
-          readMultipliers(round)
-        );
-        if (exposure > BigInt(risk.limitUnits))
-          throw new SevenPickError(
-            "RISK_LIMIT",
-            "新增订单将超过本场最大潜在返还额度"
-          );
-        // Recheck after the in-transaction risk calculation: do not debit if the
-        // placement window elapsed while SQLite was processing this order.
+        // Do not debit if the betting window elapsed during validation.
         const createdAt = assertOpen();
         const id = Number(
           db
@@ -833,9 +777,6 @@ function placeOrder(
             now: createdAt,
           });
         }
-        db.prepare(
-          "UPDATE seven_pick_risk SET max_exposure_units=? WHERE round_id=?"
-        ).run(Number(exposure), roundId);
         return orderView(db, {
           id,
           roundId,

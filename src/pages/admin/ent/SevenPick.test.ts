@@ -156,6 +156,14 @@ it("announces the new active version or a failure and repairs stale caches witho
   expect(publicOverview).toHaveBeenCalledOnce();
 });
 
+it("explains the cap removal while keeping historical skip states", () => {
+  const html = render();
+  expect(html).toContain("<h2 class=\"font-bold\">场次记录</h2>");
+  expect(html).toContain("不再限制单场总返还。旧场次的「风控跳过」状态保留，不会重新开放。");
+  expect(html).not.toContain("最大潜在返还 / 风控上限");
+  expect(html).not.toContain("通过风控");
+});
+
 it("shows the server's reason for disabling manual start", () => {
   hooks.overview.mockReturnValue({ data: { ...data, manualStartBlock: "已有场次正在开放投注" } });
   const html = render();
