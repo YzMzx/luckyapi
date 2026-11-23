@@ -1,21 +1,28 @@
 import {
-  useLayoutEffect,
+  useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent,
-  type PointerEvent,
 } from "react";
+import type {
+  Chart,
+  Crosshair,
+  KLineData,
+  Options,
+  OverlayCreate,
+} from "klinecharts";
 import {
-  candleEnd,
-  chart,
-  timeScale,
-  dayStart,
-  priceScale,
   changePercent,
+  dayStart,
+  groupCandleTrades,
+  incrementalBars,
+  toChartData,
 } from "./chartScale";
 import {
   baseCoin,
+  button,
   coin,
   day,
   input,
@@ -23,18 +30,17 @@ import {
   sim,
   stamp,
   time,
+  type PerpApi,
 } from "./format";
 import { Table } from "./shared";
-import "./PerpChart.css";
-import type { PerpApi } from "./format";
 
 type Market = PerpApi["market"];
 type Bar = Market["bars"][number];
+type Trades = PerpApi["account"]["orders"];
+const markerName = "luckyPerpFill";
+const markerGroup = "luckyPerpFills";
 const volumeFormat = new Intl.NumberFormat("zh-CN", {
   maximumFractionDigits: 8,
-});
-const priceFormat = new Intl.NumberFormat("zh-CN", {
-  maximumFractionDigits: 3,
 });
 const pctFormat = new Intl.NumberFormat("zh-CN", {
   minimumFractionDigits: 2,
@@ -42,51 +48,320 @@ const pctFormat = new Intl.NumberFormat("zh-CN", {
   signDisplay: "exceptZero",
 });
 const pct = (b: Bar) => pctFormat.format(changePercent(b.open, b.close)) + "%";
+const styles: Options["styles"] = {
+  grid: { horizontal: { color: "#203248" }, vertical: { color: "#203248" } },
+  candle: {
+    type: "candle_solid",
+    bar: {
+      compareRule: "current_open",
+      upColor: "#4ade80",
+      upBorderColor: "#4ade80",
+      upWickColor: "#4ade80",
+      downColor: "#fb7185",
+      downBorderColor: "#fb7185",
+      downWickColor: "#fb7185",
+      noChangeColor: "#94a3b8",
+      noChangeBorderColor: "#94a3b8",
+      noChangeWickColor: "#94a3b8",
+    },
+    tooltip: { showRule: "none" },
+  },
+  indicator: {
+    tooltip: { showRule: "none" },
+    ohlc: {
+      upColor: "#4ade80",
+      downColor: "#fb7185",
+      noChangeColor: "#94a3b8",
+    },
+  },
+  xAxis: {
+    axisLine: { color: "#30465d" },
+    tickLine: { color: "#30465d" },
+    tickText: { color: "#adbed1" },
+  },
+  yAxis: {
+    axisLine: { color: "#30465d" },
+    tickLine: { color: "#30465d" },
+    tickText: { color: "#adbed1" },
+  },
+  separator: { color: "#30465d" },
+};
+
+function PerpCanvas({
+  symbol,
+  interval,
+  date,
+  precision,
+  data,
+  markers,
+  onHover,
+  onSelect,
+}: {
+  symbol: string;
+  interval: Market["interval"];
+  date: string;
+  precision: number;
+  data: KLineData[];
+  markers: OverlayCreate[];
+  onHover: (timestamp: number | null) => void;
+  onSelect: (timestamp: number) => void;
+}) {
+  const node = useRef<HTMLDivElement>(null);
+  const listRef = useRef<KLineData[]>([]);
+  const pushBar = useRef<((bar: KLineData) => void) | null>(null);
+  const [chart, setChart] = useState<Chart | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const helpId = useId();
+  const previousDates = useRef(new WeakMap<Chart, string>());
+  useEffect(() => {
+    const element = node.current;
+    if (!element) return;
+    let cancelled = false;
+    let cleanup: (() => void) | undefined;
+    // KLineChart evaluates browser globals on import. Keep it out of SSR and the initial bundle.
+    void import("klinecharts")
+      .then(lib => {
+        if (cancelled) return;
+        if (!lib.getSupportedOverlays().includes(markerName)) {
+          lib.registerOverlay<{ label: string }>({
+            name: markerName,
+            totalStep: 2,
+            needDefaultPointFigure: false,
+            needDefaultXAxisFigure: false,
+            needDefaultYAxisFigure: false,
+            createPointFigures: ({ overlay, coordinates }) => {
+              const point = coordinates[0];
+              if (!point) return [];
+              return [
+                {
+                  type: "circle",
+                  attrs: { ...point, r: 3 },
+                  styles: { color: "#fbbf24" },
+                  ignoreEvent: true,
+                },
+                {
+                  type: "text",
+                  attrs: {
+                    x: point.x,
+                    y: point.y - 8,
+                    align: "center",
+                    baseline: "bottom",
+                    text: overlay.extendData.label,
+                  },
+                  styles: { color: "#fbbf24", size: 10 },
+                  ignoreEvent: true,
+                },
+              ];
+            },
+          });
+        }
+        const instance = lib.init(element, {
+          locale: "zh-CN",
+          timezone: "Asia/Shanghai",
+          styles,
+          hotkey: { enabled: false },
+        });
+        if (!instance) throw new Error("KLineChart initialization failed");
+        cleanup = () => {
+          pushBar.current = null;
+          lib.dispose(instance);
+        };
+        instance.setOffsetRightDistance(16);
+        instance.setBarSpace(9);
+        instance.createIndicator({
+          name: "VOL",
+          shortName: "成交量",
+          calcParams: [],
+          styles: {
+            bars: [
+              {
+                upColor: "#4ade80",
+                downColor: "#fb7185",
+                noChangeColor: "#94a3b8",
+              },
+            ],
+          },
+        });
+        const volume = instance.getIndicators({ name: "VOL" })[0];
+        if (volume)
+          instance.setPaneOptions({
+            id: volume.paneId,
+            height: 88,
+            minHeight: 64,
+          });
+        instance.setSymbol({
+          ticker: symbol,
+          pricePrecision: precision,
+          volumePrecision: 8,
+        });
+        instance.setPeriod({ type: "minute", span: interval });
+        instance.setDataLoader({
+          getBars: ({ type, callback }) =>
+            callback(type === "init" ? [...listRef.current] : [], false),
+          subscribeBar: ({ callback }) => {
+            pushBar.current = callback;
+          },
+          unsubscribeBar: () => {
+            pushBar.current = null;
+          },
+        });
+        instance.subscribeAction("onCrosshairChange", event => {
+          const x = (event as Crosshair | undefined)?.x;
+          if (typeof x !== "number") {
+            onHover(null);
+            return;
+          }
+          const [point] = instance.convertFromPixel([{ x }]) as {
+            dataIndex?: number;
+          }[];
+          onHover(
+            instance.getDataList()[point?.dataIndex ?? -1]?.timestamp ?? null
+          );
+        });
+        instance.subscribeAction("onCandleBarClick", event => {
+          const index = (event as { dataIndex?: number } | undefined)
+            ?.dataIndex;
+          const bar = instance.getDataList()[index ?? -1];
+          if (bar) onSelect(bar.timestamp);
+        });
+        const observer = new ResizeObserver(() => instance.resize());
+        const disposeChart = cleanup;
+        cleanup = () => {
+          observer.disconnect();
+          disposeChart();
+        };
+        observer.observe(element);
+        setChart(instance);
+      })
+      .catch(() => {
+        cleanup?.();
+        cleanup = undefined;
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+      cleanup?.();
+      setChart(null);
+    };
+  }, [symbol, interval, precision, attempt, onHover, onSelect]);
+
+  useEffect(() => {
+    listRef.current = data;
+    if (!chart) return;
+    const current = chart.getDataList();
+    const sameDate = previousDates.current.get(chart) === date;
+    const incremental = sameDate ? incrementalBars(current, data) : null;
+    if (incremental !== null && pushBar.current) {
+      for (const bar of incremental) pushBar.current(bar);
+    } else {
+      const view = chart.getVisibleRange();
+      const wasFollowing = view.to >= current.length;
+      const anchor =
+        sameDate && !wasFollowing
+          ? current[Math.max(0, view.to - 1)]?.timestamp
+          : undefined;
+      chart.resetData();
+      if (anchor !== undefined && data.length) chart.scrollToTimestamp(anchor);
+    }
+    previousDates.current.set(chart, date);
+  }, [chart, data, date]);
+  useEffect(() => {
+    if (!chart) return;
+    chart.removeOverlay({ groupId: markerGroup });
+    if (markers.length)
+      chart.createOverlay(markers.map(marker => ({ ...marker })));
+  }, [chart, date, data, markers]);
+
+  function pan(event: KeyboardEvent<HTMLDivElement>) {
+    if (
+      !chart ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey
+    )
+      return;
+    const key = event.key;
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(key)) return;
+    event.preventDefault();
+    if (key === "Home") chart.scrollToDataIndex(0);
+    else if (key === "End") chart.scrollToRealTime();
+    else
+      chart.scrollByDistance(
+        chart.getBarSpace().bar * (key === "ArrowLeft" ? 8 : -8)
+      );
+  }
+  return (
+    <>
+      <p id={helpId} className="mb-2 text-xs text-muted-foreground">
+        左右拖动查看历史 · 滚轮或双指缩放 · 移动十字线查看行情 ·
+        也可用方向键平移或下方选择器查看区间
+      </p>
+      <div className="relative rounded-xl bg-[#0b1722]">
+        <div
+          ref={node}
+          className="h-[23rem] w-full rounded-xl sm:h-[27rem]"
+          role="region"
+          aria-label="价格与成交量图"
+          aria-describedby={helpId}
+          tabIndex={0}
+          onKeyDown={pan}
+          onPointerLeave={() => onHover(null)}
+        />
+        {!chart && (
+          <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-3 text-sm text-muted-foreground">
+            <p role="status">
+              {failed
+                ? "图表加载失败，可继续查看下方行情表。"
+                : "正在加载 K 线图…"}
+            </p>
+            {failed && (
+              <button
+                type="button"
+                className={button}
+                onClick={() => {
+                  setFailed(false);
+                  setAttempt(n => n + 1);
+                }}
+              >
+                重试
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {chart && (
+        <div className="mt-2 flex justify-end">
+          <button
+            type="button"
+            className={button}
+            onClick={() => chart.scrollToRealTime()}
+          >
+            回到最新
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function PerpChart({
   market,
   trades,
 }: {
   market: Market;
-  trades: PerpApi["account"]["orders"];
+  trades: Trades;
 }) {
-  const duration = market.interval * 60000;
-  const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
-  const [viewportWidth, setViewportWidth] = useState(640);
-  const followLatest = useRef(true);
-  const pan = useRef<{ pointerId: number; x: number; left: number } | null>(
-    null
-  );
-  const skipClick = useRef(false);
-  const [dragging, setDragging] = useState(false);
-  useLayoutEffect(() => {
-    if (!viewport) return;
-    const update = () => setViewportWidth(viewport.clientWidth);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(viewport);
-    return () => observer.disconnect();
-  }, [viewport]);
-  const tradesByEnd = useMemo(() => {
-    const buckets = new Map<number, typeof trades>();
-    for (const trade of trades) {
-      if (trade.symbol !== market.symbol) continue;
-      const key = candleEnd(trade.createdAt, duration);
-      const bucket = buckets.get(key);
-      if (bucket) bucket.push(trade);
-      else buckets.set(key, [trade]);
-    }
-    return buckets;
-  }, [market.symbol, trades, duration]);
+  const duration = market.interval * 60_000;
   const [chosenDay, setDay] = useState("");
-  const [end, setEnd] = useState(0);
-  const [hover, setHover] = useState<{
-    end: number;
-    y: number;
-    left: boolean;
-  } | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [hover, setHover] = useState<number | null>(null);
+  const dateId = useId(),
+    candleId = useId();
   const dates = useMemo(
     () =>
-      [...new Set(market.bars.map(b => day(dayStart(b.endAt, duration))))]
+      [...new Set(market.bars.map(bar => day(dayStart(bar.endAt, duration))))]
         .sort()
         .reverse(),
     [market.bars, duration]
@@ -95,132 +370,77 @@ export function PerpChart({
   const bars = useMemo(
     () =>
       market.bars
-        .filter(b => day(dayStart(b.endAt, duration)) === date)
+        .filter(bar => day(dayStart(bar.endAt, duration)) === date)
         .sort((a, b) => a.endAt - b.endAt),
     [market.bars, date, duration]
   );
-  const hovered = hover && bars.find(b => b.endAt === hover.end);
-  const bar = hovered || bars.find(b => b.endAt === end) || bars.at(-1);
-  const firstEnd = bars[0]?.endAt ?? 0,
-    lastEnd = bars.at(-1)?.endAt ?? 0;
-  const axis = useMemo(
-    () => timeScale(firstEnd, lastEnd, duration, viewportWidth),
-    [firstEnd, lastEnd, duration, viewportWidth]
+  const data = useMemo(() => toChartData(bars, duration), [bars, duration]);
+  const groups = useMemo(
+    () => groupCandleTrades(trades, market.symbol, duration),
+    [trades, market.symbol, duration]
   );
-  useLayoutEffect(() => {
-    if (viewport && followLatest.current)
-      viewport.scrollTo({ left: viewport.scrollWidth - viewport.clientWidth });
-  }, [viewport, axis.width, date, lastEnd]);
+  const markers = useMemo(() => {
+    const overlays: OverlayCreate[] = [];
+    for (const bar of data) {
+      const fills = groups.get(bar.timestamp);
+      if (!fills?.length) continue;
+      const label = [
+        ...new Set(fills.map(fill => orderLabel[fill.action])),
+      ].join("/");
+      overlays.push({
+        name: markerName,
+        groupId: markerGroup,
+        lock: true,
+        points: [{ timestamp: bar.timestamp, value: bar.high }],
+        extendData: { label },
+      });
+    }
+    return overlays;
+  }, [data, groups]);
+  const bar =
+    bars.find(b => b.endAt - duration === hover) ??
+    bars.find(b => b.endAt - duration === selected) ??
+    bars.at(-1);
   if (!bar)
     return (
       <p className="py-6 text-muted-foreground">
         当前没有可展示的 Bybit {market.interval} 分钟行情。
       </p>
     );
-  const min = Math.min(...bars.map(b => b.low));
-  const max = Math.max(...bars.map(b => b.high));
-  const { y, priceAt } = priceScale(min, max);
-  function startPan(e: PointerEvent<HTMLDivElement>) {
-    if (!e.isPrimary || e.button !== 0) return;
-    skipClick.current = false;
-    const view = e.currentTarget;
-    // Keep native touch scrolling so vertical swipes still scroll the page.
-    if (e.pointerType === "touch" || view.scrollWidth <= view.clientWidth)
-      return;
-    pan.current = {
-      pointerId: e.pointerId,
-      x: e.clientX,
-      left: view.scrollLeft,
-    };
-  }
-  function movePan(e: PointerEvent<HTMLDivElement>) {
-    const start = pan.current;
-    if (!start || start.pointerId !== e.pointerId) return;
-    const dx = e.clientX - start.x;
-    if (!skipClick.current) {
-      if (Math.abs(dx) < 4) return;
-      e.currentTarget.setPointerCapture(e.pointerId);
-      skipClick.current = true;
-      followLatest.current = false;
-      setHover(null);
-      setDragging(true);
-    }
-    e.currentTarget.scrollLeft = start.left - dx;
-  }
-  function finishPan(e: PointerEvent<HTMLDivElement>) {
-    if (pan.current?.pointerId !== e.pointerId) return;
-    pan.current = null;
-    const view = e.currentTarget;
-    if (skipClick.current)
-      followLatest.current =
-        view.scrollWidth - view.clientWidth - view.scrollLeft <= axis.cell;
-    setDragging(false);
-    if (view.hasPointerCapture(e.pointerId))
-      view.releasePointerCapture(e.pointerId);
-  }
-  function panKeys(e: KeyboardEvent<HTMLDivElement>) {
-    const view = e.currentTarget;
-    const step = Math.max(axis.cell, view.clientWidth / 4);
-    const target =
-      e.key === "ArrowLeft"
-        ? view.scrollLeft - step
-        : e.key === "ArrowRight"
-          ? view.scrollLeft + step
-          : e.key === "Home"
-            ? 0
-            : e.key === "End"
-              ? view.scrollWidth - view.clientWidth
-              : null;
-    if (target === null || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey)
-      return;
-    e.preventDefault();
-    view.scrollLeft = target;
-  }
-  function inspect(e: PointerEvent<SVGSVGElement>) {
-    if (e.pointerType === "touch" || (pan.current && skipClick.current)) return;
-    const svg = e.currentTarget,
-      matrix = svg.getScreenCTM();
-    if (!matrix) return;
-    const point = new DOMPoint(e.clientX, e.clientY).matrixTransform(
-      matrix.inverse()
-    );
-    const t = axis.endAtPoint(point.x, point.y);
-    const viewport = svg.parentElement!.getBoundingClientRect();
-    setHover(
-      t !== null && bars.some(b => b.endAt === t)
-        ? {
-            end: t,
-            y: Math.round(point.y),
-            left: e.clientX > viewport.left + viewport.width / 2,
-          }
-        : null
-    );
-  }
-  const volumeMax = Math.max(1, ...bars.map(b => b.volume));
-  const marks = (b: Bar) => tradesByEnd.get(b.endAt) ?? [];
-  const fills = marks(bar);
+  const fills = groups.get(bar.endAt - duration) ?? [];
+  const tick = market.instrument?.tickSizeUnits;
+  const precision = tick
+    ? tick % 1000 === 0
+      ? 0
+      : tick % 100 === 0
+        ? 1
+        : tick % 10 === 0
+          ? 2
+          : 3
+    : 3;
+  const intervalLabel = (b: Bar) =>
+    time(b.endAt - duration) + "–" + time(b.endAt);
   return (
-    <figure className="mt-4">
+    <figure className="mt-4 min-w-0">
       <figcaption className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h3 className="font-bold">{market.interval} 分钟 K 线与成交量</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            全天交易 · 北京时间 · 空心收高，实心收低，横线平收
+            北京时间 · 绿涨红跌 · 黄色标记为个人成交
           </p>
         </div>
         <div>
-          <label htmlFor="chart-date" className="text-xs">
+          <label htmlFor={dateId} className="text-xs">
             日期
           </label>
           <select
-            id="chart-date"
+            id={dateId}
             className={input}
             value={date}
-            onChange={e => {
-              followLatest.current = true;
-              setDay(e.target.value);
+            onChange={event => {
+              setDay(event.target.value);
               setHover(null);
-              setEnd(0);
+              setSelected(null);
             }}
           >
             {dates.map(d => (
@@ -229,246 +449,34 @@ export function PerpChart({
           </select>
         </div>
       </figcaption>
-      <p id="perp-chart-help" className="mb-2 text-xs text-muted-foreground">
-        按住图面左右拖动或触屏滑动 · 聚焦图表后可用左右方向键 ·
-        点击蜡烛或用下方选择器查看详情
-      </p>
-      <div className="relative">
-        <div
-          ref={setViewport}
-          onScroll={e => {
-            const v = e.currentTarget;
-            followLatest.current =
-              v.scrollWidth - v.clientWidth - v.scrollLeft <= axis.cell;
-            setHover(null);
-          }}
-          onPointerDown={startPan}
-          onPointerMoveCapture={movePan}
-          onPointerUp={finishPan}
-          onPointerCancel={finishPan}
-          onLostPointerCapture={finishPan}
-          onPointerLeave={e => {
-            if (!e.currentTarget.hasPointerCapture(e.pointerId)) finishPan(e);
-          }}
-          onClickCapture={e => {
-            if (!skipClick.current) return;
-            skipClick.current = false;
-            e.stopPropagation();
-          }}
-          onKeyDown={panKeys}
-          className={
-            "perp-chart-viewport overflow-x-auto rounded-xl bg-[#0b1722] " +
-            (dragging
-              ? "cursor-grabbing"
-              : axis.width > viewportWidth
-                ? "cursor-grab"
-                : "")
-          }
-          role="region"
-          tabIndex={0}
-          aria-label="价格与成交量图"
-          aria-describedby="perp-chart-help"
-        >
-          <svg
-            onPointerMove={inspect}
-            onPointerLeave={() => setHover(null)}
-            onPointerCancel={() => setHover(null)}
-            role="img"
-            aria-label={
-              date +
-              " 的 " +
-              market.interval +
-              " 分钟行情，可在下方选择区间查看数值"
-            }
-            viewBox={`0 0 ${axis.width} 287`}
-            width={axis.width}
-            height={287}
-            className="block max-w-none"
-            fill="currentColor"
-            fontSize="11"
-          >
-            {[max, (max + min) / 2, min]
-              .filter((p, i, a) => a.indexOf(p) === i)
-              .map(p => (
-                <g key={p}>
-                  <text x="6" y={y(p) + 4}>
-                    {priceFormat.format(p)}
-                  </text>
-                  <line
-                    x1="60"
-                    x2={axis.width - 18}
-                    y1={y(p)}
-                    y2={y(p)}
-                    stroke="#314453"
-                  />
-                </g>
-              ))}
-            <text x="6" y="18">
-              价格 / USDT
-            </text>
-            <text x="6" y="202">
-              量 / {baseCoin(market.symbol)}
-            </text>
-            <text x="6" y="222">
-              {volumeMax.toLocaleString("zh-CN")}
-            </text>
-            {bars.map(b => {
-              const cx = axis.x(b.endAt);
-              const up = b.close > b.open;
-              const color = up
-                ? "#fb8789"
-                : b.close < b.open
-                  ? "#5ad6ac"
-                  : "#b6beca";
-              const h = (b.volume / volumeMax) * 43;
-              const filled = marks(b);
-              return (
-                <g key={b.endAt} onClick={() => setEnd(b.endAt)}>
-                  <rect
-                    x={cx - axis.cell / 2}
-                    width={axis.cell}
-                    y="25"
-                    height="230"
-                    fill={b.endAt === bar.endAt ? "#263748" : "transparent"}
-                  />
-                  <line
-                    x1={cx}
-                    x2={cx}
-                    y1={y(b.high)}
-                    y2={y(b.low)}
-                    stroke={color}
-                    strokeWidth="1.5"
-                  />
-                  <rect
-                    x={cx - 4}
-                    width="8"
-                    y={y(Math.max(b.open, b.close))}
-                    height={Math.max(1, Math.abs(y(b.open) - y(b.close)))}
-                    fill={up ? "#0b1722" : color}
-                    stroke={color}
-                    strokeWidth="1.5"
-                  />
-                  <rect
-                    x={cx - 4}
-                    width="8"
-                    y={253 - h}
-                    height={h}
-                    fill={color}
-                  />
-                  {filled.length > 0 && (
-                    <text x={cx} y="190" textAnchor="middle" fill="#ffc85d">
-                      {[...new Set(filled.map(o => orderLabel[o.action]))].join(
-                        "/"
-                      )}
-                    </text>
-                  )}
-                </g>
-              );
-            })}
-            {hovered && hover && (
-              <g
-                pointerEvents="none"
-                aria-hidden="true"
-                stroke="#d9e6f5"
-                strokeDasharray="4 3"
-              >
-                <line
-                  x1={axis.x(hovered.endAt)}
-                  x2={axis.x(hovered.endAt)}
-                  y1={chart.top}
-                  y2={chart.volumeBottom}
-                />
-                {priceAt(hover.y) !== null && (
-                  <>
-                    <line
-                      x1="60"
-                      x2={axis.width - 18}
-                      y1={hover.y}
-                      y2={hover.y}
-                    />
-                    <rect
-                      stroke="none"
-                      fill="#263748"
-                      x="0"
-                      y={hover.y - 9}
-                      width="74"
-                      height="18"
-                      rx="3"
-                    />
-                    <text x="4" y={hover.y + 4} stroke="none" fill="#fff">
-                      {priceFormat.format(priceAt(hover.y)!)}
-                    </text>
-                  </>
-                )}
-              </g>
-            )}
-            {axis.ticks.map(t => (
-              <text key={t} x={axis.x(t)} y="275" textAnchor="middle">
-                {time(t - duration)}
-              </text>
-            ))}
-          </svg>
-        </div>
-        {hovered && hover && (
-          <div
-            aria-hidden="true"
-            className={
-              "pointer-events-none absolute top-2 z-10 max-w-[85%] rounded-lg border border-slate-500/60 bg-[#122234]/95 px-3 py-2 text-xs text-white shadow-lg tabular-nums " +
-              (hover.left ? "left-2" : "right-2")
-            }
-          >
-            <strong>
-              {time(hovered.endAt - duration)}–{time(hovered.endAt)} ·{" "}
-              {hovered.complete ? "已收盘" : "更新中"}
-            </strong>
-            <dl className="mt-1 grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5">
-              {[
-                ["开", priceFormat.format(hovered.open)],
-                ["高", priceFormat.format(hovered.high)],
-                ["低", priceFormat.format(hovered.low)],
-                ["收", priceFormat.format(hovered.close)],
-                ["涨跌幅", pct(hovered)],
-                [
-                  "量 / " + baseCoin(market.symbol),
-                  volumeFormat.format(hovered.volume),
-                ],
-              ].map(([k, v]) => (
-                <div className="contents" key={k}>
-                  <dt className="text-slate-300">{k}</dt>
-                  <dd className="text-right">{v}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        )}
-      </div>
+      <PerpCanvas
+        symbol={market.symbol}
+        interval={market.interval}
+        date={date}
+        precision={precision}
+        data={data}
+        markers={markers}
+        onHover={setHover}
+        onSelect={setSelected}
+      />
       <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
-        <label htmlFor="chart-candle">查看区间</label>
+        <label htmlFor={candleId}>查看区间</label>
         <select
-          id="chart-candle"
+          id={candleId}
           className="rounded border border-border bg-[#162638] p-2"
-          value={bar.endAt}
-          onChange={e => {
+          value={bar.endAt - duration}
+          onChange={event => {
             setHover(null);
-            const t = Number(e.target.value);
-            setEnd(t);
-            if (viewport) {
-              const cx = axis.x(t);
-              if (
-                cx < viewport.scrollLeft ||
-                cx > viewport.scrollLeft + viewport.clientWidth
-              )
-                viewport.scrollTo({ left: cx - viewport.clientWidth / 2 });
-            }
+            setSelected(Number(event.target.value));
           }}
         >
           {bars.map(b => (
-            <option key={b.endAt} value={b.endAt}>
-              {time(b.endAt - duration)}–{time(b.endAt)}
+            <option key={b.endAt} value={b.endAt - duration}>
+              {intervalLabel(b)}
             </option>
           ))}
         </select>
-        <span>
+        <span className="tabular-nums">
           开 {bar.open} 高 {bar.high} 低 {bar.low} 收 {bar.close} · 涨跌幅{" "}
           {pct(bar)} · 量 {volumeFormat.format(bar.volume)}{" "}
           {baseCoin(market.symbol)}
@@ -477,11 +485,11 @@ export function PerpChart({
       </div>
       {fills.length > 0 && (
         <ul className="mt-2 text-sm text-[#ffd473]">
-          {fills.map(o => (
-            <li key={o.id}>
-              {stamp(o.createdAt)} {orderLabel[o.action]}{" "}
-              {coin(o.quantityAtoms)} {baseCoin(o.symbol)} · 成交价{" "}
-              {sim(o.priceUnits)} USDT
+          {fills.map(fill => (
+            <li key={fill.id}>
+              {stamp(fill.createdAt)} {orderLabel[fill.action]}{" "}
+              {coin(fill.quantityAtoms)} {baseCoin(fill.symbol)} · 成交价{" "}
+              {sim(fill.priceUnits)} USDT
             </li>
           ))}
         </ul>
@@ -491,7 +499,7 @@ export function PerpChart({
         <Table
           title={date + " " + market.interval + " 分钟行情"}
           columns={[
-            "区间结束",
+            "区间",
             "开",
             "高",
             "低",
@@ -502,7 +510,9 @@ export function PerpChart({
         >
           {bars.map(b => (
             <tr key={b.endAt}>
-              <td>{time(b.endAt)}</td>
+              <th scope="row" className="px-3 py-2 font-medium">
+                {intervalLabel(b)}
+              </th>
               <td>{b.open}</td>
               <td>{b.high}</td>
               <td>{b.low}</td>

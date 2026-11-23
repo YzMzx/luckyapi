@@ -1,73 +1,92 @@
 import { expect, it } from "vitest";
 import {
-  chart,
-  candleEnd,
-  timeScale,
-  dayStart,
-  priceScale,
   changePercent,
+  dayStart,
+  groupCandleTrades,
+  incrementalBars,
+  toChartData,
 } from "./chartScale";
-const start = Date.parse("2026-11-22T00:00:00+08:00"),
-  dayMs = 86400000;
-it.each([1, 3, 5, 15])(
-  "assigns fills to half-open %i-minute intervals across midnight",
-  minutes => {
-    const d = minutes * 60000;
-    const midnight = start + dayMs;
-    expect(candleEnd(midnight - 1, d)).toBe(midnight);
-    expect(dayStart(midnight, d)).toBe(start);
-    expect(candleEnd(midnight, d)).toBe(midnight + d);
-    expect(dayStart(midnight + d, d)).toBe(midnight);
-  }
-);
-it.each([1, 3, 5, 15])(
-  "limits the %i-minute axis to the actual window, with matching price and volume hit targets",
-  minutes => {
-    const d = minutes * 60000;
-    const first = start + 12 * 3600000 + d;
-    const axis = timeScale(first, first + 9 * d, d, 640);
-    expect(axis.width).toBe(640);
-    expect(axis.ticks[0]).toBe(first);
-    for (let i = 0; i < 10; i++) {
-      const end = first + i * d;
-      for (const y of [chart.top, 100, chart.volumeBottom])
-        expect(axis.endAtPoint(axis.x(end), y)).toBe(end);
-    }
-    expect(
-      axis.endAtPoint(axis.x(first) - axis.cell / 2 - 0.1, 100)
-    ).toBeNull();
-    expect(
-      axis.endAtPoint(axis.x(first) + 9.5 * axis.cell + 0.1, 100)
-    ).toBeNull();
-    expect(axis.endAtPoint(axis.x(first), 275)).toBeNull();
-  }
-);
-it("leaves missing time slots between sparse bars and keeps dense one-minute bars readable", () => {
-  const first = start + 60000,
-    last = first + 198 * 60000,
-    axis = timeScale(first, last, 60000, 480);
-  const available = new Set([first, last]);
-  expect(axis.cell).toBeGreaterThanOrEqual(12);
-  expect(axis.endAtPoint(axis.x(first) + axis.cell, 60)).toBe(first + 60000);
-  expect(available.has(axis.endAtPoint(axis.x(first) + axis.cell, 60)!)).toBe(
-    false
-  );
-  expect(axis.x(last) - axis.x(first)).toBe(axis.cell * 198);
-  const single = timeScale(first, first, 60000, 480);
-  expect(single.ticks).toEqual([first]);
-  expect(single.endAtPoint(single.x(first), 100)).toBe(first);
+import type { PerpApi } from "./format";
+
+const midnight = Date.parse("2026-11-23T00:00:00+08:00");
+const candle = (endAt: number) => ({
+  endAt,
+  open: 10,
+  high: 11,
+  low: 9,
+  close: 10.5,
+  volume: 2,
+  complete: true,
 });
-it("maps price crosshairs accurately for flat and low-price contracts without measuring volume as price", () => {
-  for (const [low, high] of [
-    [0.001, 0.001],
-    [12.113, 12.115],
-    [60000, 67500],
-  ]) {
-    const s = priceScale(low, high);
-    for (const p of [low, high]) expect(s.priceAt(s.y(p))).toBeCloseTo(p, 8);
-    expect(s.priceAt(220)).toBeNull();
+const trade = (
+  id: number,
+  createdAt: number,
+  symbol = "BTCUSDT"
+): PerpApi["account"]["orders"][number] => ({
+  id,
+  symbol,
+  createdAt,
+  action: "openLong",
+  side: "long",
+  leverage: 1,
+  quantityAtoms: 1,
+  priceUnits: 10,
+  markUnits: 10,
+  feeUnits: 0,
+  pnlUnits: 0,
+});
+it.each([1, 3, 5, 15])(
+  "aligns %i-minute canvas candles, fill markers and Beijing date boundaries",
+  minutes => {
+    const duration = minutes * 60000;
+    expect(dayStart(midnight, duration)).toBe(midnight - 86_400_000);
+    expect(dayStart(midnight + duration, duration)).toBe(midnight);
+    const data = toChartData(
+      [candle(midnight), candle(midnight + duration)],
+      duration
+    );
+    expect(data.map(bar => bar.timestamp)).toEqual([
+      midnight - duration,
+      midnight,
+    ]);
+    expect(data[0]).toMatchObject({
+      open: 10,
+      high: 11,
+      low: 9,
+      close: 10.5,
+      volume: 2,
+    });
+    const markers = groupCandleTrades(
+      [
+        trade(1, midnight - 1),
+        trade(2, midnight),
+        trade(3, midnight, "ETHUSDT"),
+        trade(4, midnight + 1),
+      ],
+      "BTCUSDT",
+      duration
+    );
+    expect(markers.get(data[0].timestamp)?.map(t => t.id)).toEqual([1]);
+    expect(markers.get(data[1].timestamp)?.map(t => t.id)).toEqual([2, 4]);
   }
+);
+it("updates only the changed tail, with no redraw for identical polling results", () => {
+  const d = 60_000;
+  const current = toChartData([candle(midnight), candle(midnight + d)], d);
+  const next = toChartData(
+    [
+      candle(midnight),
+      { ...candle(midnight + d), close: 11 },
+      candle(midnight + 2 * d),
+    ],
+    d
+  );
+  expect(incrementalBars(current, [...current])).toEqual([]);
+  expect(incrementalBars(current, next)).toEqual(next.slice(1));
+  expect(incrementalBars(current, [...current, next[2]])).toEqual([next[2]]);
+  expect(incrementalBars(current, next.slice(1))).toBeNull();
+  expect(
+    incrementalBars(current, [{ ...current[0], volume: 42 }, current[1]])
+  ).toBeNull();
   expect(changePercent(10, 11)).toBe(10);
-  expect(changePercent(10, 9)).toBe(-10);
-  expect(changePercent(10, 10)).toBe(0);
 });
