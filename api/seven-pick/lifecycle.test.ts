@@ -12,6 +12,7 @@ import {
 } from "./lifecycle";
 import { ensureSevenPickLifecycleSchema } from "./lifecycle-schema";
 import { tickSevenPickMaintenance } from "./maintenance";
+import { setSevenPickRuntime } from "./release";
 import { ensureSevenPickSchema } from "./schema";
 import { readSevenPickCash } from "./wallet";
 
@@ -29,7 +30,8 @@ let db: Database.Database;
 beforeEach(() => {
   db = new Database(":memory:");
   db.pragma("foreign_keys=ON");
-  db.exec("CREATE TABLE users(id INTEGER PRIMARY KEY); INSERT INTO users VALUES (1),(2),(3);");
+  db.exec("CREATE TABLE users(id INTEGER PRIMARY KEY); INSERT INTO users VALUES (1),(2),(3); " +
+    "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT); CREATE TABLE admin_logs (action TEXT, detail TEXT);");
   db.exec(PERP_ENGINE_SCHEMA);
   ensureSevenPickSchema(db);
   ensureSevenPickLifecycleSchema(db);
@@ -137,7 +139,8 @@ describe("Quicknet-only lifecycle", () => {
     expect(getSevenPickLifecycle(db, round.id)?.reviewReasons).toContain("sealed_after_beacon");
     await expect(approveSevenPickRefund(db, reviewInput(round.id), now)).resolves.toMatchObject({ status: "refunding" });
     expect(resumeSevenPickRefund(db, round.id, now + 1, 1)).toMatchObject({ status: "refunding", refund: { refundedBets: 1 } });
-    await tickSevenPickMaintenance(db, { allowLaunch: false, now: now + 2 });
+    setSevenPickRuntime(db, "paused", true, 1);
+    await tickSevenPickMaintenance(db, { now: now + 2 });
     expect(resumeSevenPickRefund(db, round.id, now + 3)).toMatchObject({ status: "refunded", refund: { refundedBets: 2 } });
     expect(readSevenPickCash(db, 1)).toBe(1_000_000);
     expect(readSevenPickCash(db, 2)).toBe(1_000_000);
@@ -157,7 +160,7 @@ describe("Quicknet-only lifecycle", () => {
     expect(db.prepare("SELECT COUNT(*) FROM seven_pick_draws").pluck().get()).toBe(1);
     expect(hasSevenPickQuicknetSeal(db, round.id)).toBe(false);
     const network = { fetch: vi.fn<typeof fetch>() };
-    await tickSevenPickMaintenance(db, { allowLaunch: false, now: round.quicknetScheduledAt + 3_600_000, network });
+    await tickSevenPickMaintenance(db, { now: round.quicknetScheduledAt + 3_600_000, network });
     expect(network.fetch).not.toHaveBeenCalled();
     await expect(settleSevenPickRound(db, round.id, round.quicknetScheduledAt)).resolves.toBeNull();
     expect(getSevenPickPublicProof(db, round.id)).toBeNull();
@@ -169,7 +172,7 @@ describe("Quicknet-only lifecycle", () => {
     sealSevenPickRound(db, round.id, round.closesAt);
     const reached = round.quicknetScheduledAt;
     const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 503 }));
-    const options = { allowLaunch: false, network: { fetch: fetchMock } };
+    const options = { network: { fetch: fetchMock } };
     await tickSevenPickMaintenance(db, { ...options, now: reached });
     expect(currentStatus(round.id)).toBe("sealed");
     expect(readSevenPickCash(db, 1)).toBe(999_000);
@@ -183,24 +186,34 @@ describe("Quicknet-only lifecycle", () => {
     expect(readSevenPickCash(db, 1)).toBe(50_999_000);
   });
 
-  it("schedules, seals and settles an empty round directly from both pinned Quicknet relays", async () => {
-    await tickSevenPickMaintenance(db, { allowLaunch: false, now: OPENS - 1000 });
+  it("does not create or open rounds while paused, but seals and pays accepted wagers", async () => {
+    setSevenPickRuntime(db, "paused", true, 1);
+    await tickSevenPickMaintenance(db, { now: OPENS - 1000 });
     expect(getSevenPickRound(db, 1)).toBeNull();
-    await tickSevenPickMaintenance(db, { allowLaunch: true, now: OPENS - 1000 });
+    setSevenPickRuntime(db, "paused", false, 1);
+    await tickSevenPickMaintenance(db, { now: OPENS - 1000 });
     const round = getSevenPickRound(db, 1)!;
     expect(round.quicknetRound).toBe(ROUND);
     expect(round.status).toBe("scheduled");
-    await tickSevenPickMaintenance(db, { allowLaunch: true, now: OPENS });
+    setSevenPickRuntime(db, "paused", true, 1);
+    await tickSevenPickMaintenance(db, { now: OPENS });
+    expect(currentStatus(round.id)).toBe("scheduled");
+    setSevenPickRuntime(db, "paused", false, 1);
+    await tickSevenPickMaintenance(db, { now: OPENS });
+    expect(currentStatus(round.id)).toBe("open");
+    bet(round.id, 1, WINNING, "1");
+    setSevenPickRuntime(db, "paused", true, 1);
     const fetchMock = vi.fn<typeof fetch>(async () => Response.json(FIXTURE));
-    await tickSevenPickMaintenance(db, { allowLaunch: false, now: round.closesAt, network: { fetch: fetchMock } });
+    await tickSevenPickMaintenance(db, { now: round.closesAt, network: { fetch: fetchMock } });
     expect(currentStatus(round.id)).toBe("sealed");
     expect(fetchMock).not.toHaveBeenCalled();
-    await tickSevenPickMaintenance(db, { allowLaunch: false, now: round.quicknetScheduledAt, network: { fetch: fetchMock } });
+    await tickSevenPickMaintenance(db, { now: round.quicknetScheduledAt, network: { fetch: fetchMock } });
     expect(fetchMock.mock.calls.map(([url]) => String(url)).sort()).toEqual([
       "https://api.drand.sh/v2/beacons/quicknet/rounds/" + ROUND,
       "https://drand.cloudflare.com/" + QUICKNET.chainHash + "/public/" + ROUND,
     ].sort());
-    expect(getSevenPickLifecycle(db, round.id)).toMatchObject({ status: "settled", result: { itemIds: WINNING, totalPayoutUnits: 0 } });
+    expect(getSevenPickLifecycle(db, round.id)).toMatchObject({ status: "settled", result: { itemIds: WINNING, totalPayoutUnits: 50_000_000 } });
+    expect(readSevenPickCash(db, 1)).toBe(50_999_000);
     expect(listSevenPickAudit(db, round.id).filter(row => row.kind === "quicknet")).toHaveLength(2);
   });
 });

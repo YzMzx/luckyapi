@@ -22,6 +22,7 @@ import {
   placeSevenPickOrderForTest,
 } from "./engine";
 import { sevenPickItemMask } from "./risk";
+import { setSevenPickRuntime } from "./release";
 import { ensureSevenPickSchema } from "./schema";
 import { applySevenPickCash, readSevenPickCash } from "./wallet";
 
@@ -38,7 +39,9 @@ const bet = (itemIds = A, amount = "1") => ({ itemIds, amount });
 function init(db: Database.Database) {
   db.pragma("foreign_keys = ON");
   db.exec(
-    "CREATE TABLE users (id INTEGER PRIMARY KEY); INSERT INTO users VALUES(1),(2),(3);"
+    "CREATE TABLE users (id INTEGER PRIMARY KEY); INSERT INTO users VALUES(1),(2),(3); " +
+      "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT); " +
+      "CREATE TABLE IF NOT EXISTS admin_logs (action TEXT, detail TEXT);"
   );
   db.exec(PERP_ENGINE_SCHEMA);
   ensureSevenPickSchema(db);
@@ -243,8 +246,9 @@ describe("七星寻宝 configuration and locked snapshot", () => {
 });
 
 describe("atomic seven-pick order placement", () => {
-  it("fails closed even in a test environment unless the internal entry point is explicitly used", () => {
+  it("blocks new orders when paused, including the isolated test entry point", () => {
     const { id } = makeRound(db);
+    setSevenPickRuntime(db, "paused", true, 1);
     const input = { roundId: id, requestKey: "new", bets: [bet()] };
     expect(getSevenPickSnapshot(db, OPENS)).toMatchObject({
       name: "七星寻宝",
@@ -254,7 +258,6 @@ describe("atomic seven-pick order placement", () => {
     expect(() => placeSevenPickOrder(db, 1, input, OPENS)).toThrow(
       expect.objectContaining({ code: "BETTING_DISABLED" })
     );
-    vi.stubEnv("NODE_ENV", "production");
     expect(() => placeSevenPickOrderForTest(db, 1, input, OPENS)).toThrow(
       expect.objectContaining({ code: "BETTING_DISABLED" })
     );

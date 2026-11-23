@@ -17,8 +17,6 @@ services:
       LINUXDO_PRIMARY_ORIGIN: ${LINUXDO_PRIMARY_ORIGIN:-}
       PERP_DEPOSITS_ENABLED: ${PERP_DEPOSITS_ENABLED:-1}
       PERP_TRADING_ENABLED: ${PERP_TRADING_ENABLED:-1}
-      SEVEN_PICK_ENABLED: ${SEVEN_PICK_ENABLED:-0}
-      SEVEN_PICK_RFC3161: ${SEVEN_PICK_RFC3161:-0}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
       interval: 30s

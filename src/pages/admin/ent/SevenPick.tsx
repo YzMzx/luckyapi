@@ -71,7 +71,7 @@ function ConfigForm({ latest }: { latest: Overview["latest"] }) {
     save.mutate({ expectedVersionId: id, config: { ...form, openMinutes, minStakeUnits: fromUnitsInput(minimum), maxStakeUnits: fromUnitsInput(maximum) } });
   }}>
     <fieldset className="space-y-4 rounded-xl border border-border bg-card p-4">
-      <legend className="px-2 font-bold">开关与时间</legend>
+      <legend className="px-2 font-bold">次日玩法配置与时间</legend>
       <label className="flex items-start gap-2 text-sm"><input className="mt-1 accent-primary" type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />为次日配置开启玩法</label>
       <div className="space-y-1">
         <label htmlFor={openId} className="text-sm">开盘时间（北京时间，多个时刻用顿号或逗号分隔）</label>
@@ -169,17 +169,55 @@ function RoundAudit({ rounds }: { rounds: Overview["rounds"] }) {
   </section>;
 }
 
+function RuntimeControls({ runtime }: { runtime: Overview["runtime"] }) {
+  const utils = trpc.useUtils();
+  const pauseHint = useId();
+  const tsaHint = useId();
+  const update = trpc.admin.sevenPick.setRuntime.useMutation({
+    onSuccess: (next) => {
+      utils.admin.sevenPick.overview.setData(undefined, (current) => current && { ...current, runtime: next });
+      void utils.admin.sevenPick.overview.invalidate();
+      void utils.sevenPick.overview.invalidate();
+    },
+  });
+  // In browsers without native switch rendering this is still a labelled checkbox.
+  const switchAttribute = { switch: "" };
+  const control = "size-5 shrink-0 cursor-pointer accent-primary focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary disabled:cursor-wait";
+  return <fieldset className="space-y-3 rounded-xl border border-border bg-card p-4" disabled={update.isPending}>
+    <legend className="px-2 font-bold">运行开关（即时生效）</legend>
+    <div className="space-y-1 rounded-lg border border-border p-3">
+      <label className="flex cursor-pointer items-center justify-between gap-3 text-sm font-semibold">
+        <span>暂停接收新投注</span>
+        <input type="checkbox" {...switchAttribute} className={control} checked={runtime.paused} aria-describedby={pauseHint}
+          onChange={(event) => update.mutate({ key: "paused", value: event.currentTarget.checked })} />
+      </label>
+      <p id={pauseHint} className="text-xs text-muted-foreground">开启后不再开新场或接收新投注；已接受的投注照常开奖和结算。</p>
+    </div>
+    <div className="space-y-1 rounded-lg border border-border p-3">
+      <label className="flex cursor-pointer items-center justify-between gap-3 text-sm font-semibold">
+        <span>启用 RFC 3161 封盘时间凭证</span>
+        <input type="checkbox" {...switchAttribute} className={control} checked={runtime.rfc3161Enabled} aria-describedby={tsaHint}
+          onChange={(event) => update.mutate({ key: "rfc3161Enabled", value: event.currentTarget.checked })} />
+      </label>
+      <p id={tsaHint} className="text-xs text-muted-foreground">仅向公开时间戳服务提交摘要。关闭或未取得凭证不影响开奖和派奖。</p>
+    </div>
+    {update.error && <p role="alert" className="text-sm text-destructive">保存失败：{update.error.message}</p>}
+    <p role="status" className="text-xs text-muted-foreground">{update.isSuccess ? "运行开关已保存。" : ""}</p>
+  </fieldset>;
+}
+
 export default function AdminSevenPick() {
   const overview = trpc.admin.sevenPick.overview.useQuery();
   if (overview.isPending) return <p role="status">加载七星寻宝配置…</p>;
   if (overview.error) return <p role="alert">加载失败：{overview.error.message} <button type="button" className="underline" onClick={() => void overview.refetch()}>重试</button></p>;
-  const { active, latest, rounds, versions, launchReady } = overview.data;
+  const { active, latest, rounds, versions, runtime } = overview.data;
   return <div className="max-w-[90rem] space-y-5">
     <section className="space-y-2 rounded-xl border border-border bg-card p-4">
-      <h2 className="font-bold">上线状态：{launchReady ? "已启用" : "仅预览"}</h2>
-      <p className="text-sm text-muted-foreground">{!launchReady && "部署开关未开启，暂不接收投注。"}配置按北京时间次日生效，已创建场次不受影响。</p>
+      <h2 className="font-bold">运行状态：{runtime.paused ? "已暂停接单" : active.enabled ? "已启用，按场次开放" : "当前生效配置未启用"}</h2>
+      <p className="text-sm text-muted-foreground">下方规则配置按北京时间次日生效，已创建场次不受影响。</p>
       <p className="text-sm">当前生效：{active.id === null ? "默认规则" : "版本 #" + active.id} · 最新版本：{latest.id === null ? "默认规则" : "#" + latest.id + "，" + beijing.format(latest.effectiveAt)}</p>
     </section>
+    <RuntimeControls runtime={runtime} />
     <ConfigForm key={latest.id ?? "default"} latest={latest} />
     <section className="space-y-2 rounded-xl border border-border bg-card p-4">
       <h2 className="font-bold">近期配置版本</h2>

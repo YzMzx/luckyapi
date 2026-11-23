@@ -16,7 +16,7 @@ import {
   placeSevenPickOrder, SevenPickError, sevenPickPlaceInput,
 } from "../seven-pick/engine";
 import { approveSevenPickRefund, getSevenPickLifecycle, listSevenPickAudit, SevenPickLifecycleError } from "../seven-pick/lifecycle";
-import { sevenPickLaunchReady } from "../seven-pick/release";
+import { getSevenPickRuntime, setSevenPickRuntime } from "../seven-pick/release";
 import { readSevenPickCash } from "../seven-pick/wallet";
 import { getSevenPickSealTimestampTime } from "../seven-pick/seal-timestamp";
 
@@ -64,7 +64,8 @@ export const sevenPickRouter = createRouter({
       name: state.name,
       now: state.now,
       round: state.round ? publicRound(state.round) : null,
-      launchReady: sevenPickLaunchReady(),
+      launchReady: !state.paused,
+      paused: state.paused,
       configured: enabled,
       acceptingOrders: state.bettingEnabled && !readControlState(getDb()).maintenance,
       preview: { items, multipliers, minStakeUnits, maxStakeUnits, openMinutes, closeAfterMinutes, drawAfterMinutes },
@@ -112,8 +113,10 @@ export const sevenPickRouter = createRouter({
 export const sevenPickAdminRouter = createRouter({
   overview: adminQuery.query(() => {
     const db = getDb().$client;
+    const runtime = getSevenPickRuntime(db);
     return {
-      launchReady: sevenPickLaunchReady(),
+      launchReady: !runtime.paused,
+      runtime,
       active: getSevenPickConfig(db),
       latest: getLatestSevenPickConfig(db),
       versions: listSevenPickConfigVersions(db, 10).map(({ id, effectiveAt, createdAt, enabled }) => ({ id, effectiveAt, createdAt, enabled })),
@@ -123,6 +126,10 @@ export const sevenPickAdminRouter = createRouter({
       ).pluck().all().map((id) => getSevenPickRound(db, id)).filter((round) => round !== null),
     };
   }),
+  setRuntime: adminQuery.input(z.strictObject({
+    key: z.enum(["paused", "rfc3161Enabled"]),
+    value: z.boolean(),
+  })).mutation(({ ctx, input }) => setSevenPickRuntime(getDb().$client, input.key, input.value, ctx.adminSessionId)),
   audit: adminQuery.input(roundIdInput).query(({ input }) => {
     const db = getDb().$client;
     const lifecycle = getSevenPickLifecycle(db, input.roundId);

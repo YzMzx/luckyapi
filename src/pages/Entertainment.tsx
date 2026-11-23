@@ -56,7 +56,7 @@ export default function Entertainment() {
       desc: "32 件宝物选 7 件 · 使用模拟合约钱包",
       status: !sevenPick.data ? null : sevenPick.data.acceptingOrders
         ? { text: "可投注", cls: "border-[#00B77D]/50 bg-[#00B77D]/10 text-[#00B77D]" }
-        : { text: sevenPick.data.launchReady ? "待开盘" : "预览", cls: "border-border bg-white/5 text-muted-foreground" },
+        : { text: sevenPick.data.paused ? "暂停接单" : sevenPick.data.configured ? "待开盘" : "未启用", cls: "border-border bg-white/5 text-muted-foreground" },
     },
     {
       to: "/contracts",

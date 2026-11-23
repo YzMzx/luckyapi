@@ -1,7 +1,8 @@
 import type Database from "better-sqlite3";
 import { beijingDayStart, getSevenPickConfig, MINUTE_MS } from "./config";
 import { fetchQuicknetRound } from "./drand";
-import { createSevenPickRound, openSevenPickRound, type SevenPickRound } from "./engine";
+import { createSevenPickRound, openSevenPickRound, SevenPickError, type SevenPickRound } from "./engine";
+import { getSevenPickRuntime } from "./release";
 import {
   evaluateSevenPickRound,
   hasSevenPickQuicknetSeal,
@@ -20,7 +21,6 @@ const MAX_ACTIVE_NETWORK_ROUNDS = 4;
 const activeNetwork = new WeakMap<Db, Set<number>>();
 const lastNetworkStarts = new WeakMap<Db, Map<number, number>>();
 export type SevenPickMaintenanceOptions = {
-  allowLaunch: boolean;
   network?: Parameters<typeof fetchQuicknetRound>[1];
   now?: number;
   onError?: (error: unknown, roundId?: number) => void;
@@ -34,7 +34,14 @@ function scheduleUpcomingRounds(db: Db, now: number) {
     if (!config.enabled) continue;
     for (const minute of config.openMinutes) {
       const opensAt = day + minute * MINUTE_MS;
-      if (opensAt > now && opensAt <= now + SCHEDULE_AHEAD_MS) createSevenPickRound(db, opensAt, now);
+      if (opensAt > now && opensAt <= now + SCHEDULE_AHEAD_MS) {
+        try { createSevenPickRound(db, opensAt, now); }
+        catch (error) {
+          // Another process can commit an admin pause after our first read.
+          // Skip new slots without dropping settlement work for existing rounds.
+          if (!(error instanceof SevenPickError) || error.code !== "BETTING_DISABLED") throw error;
+        }
+      }
     }
   }
 }
@@ -72,7 +79,8 @@ async function fetchAndSettle(db: Db, round: PendingRound, options: SevenPickMai
 
 export async function tickSevenPickMaintenance(db: Db, options: SevenPickMaintenanceOptions): Promise<void> {
   const now = options.now ?? Date.now();
-  if (options.allowLaunch) scheduleUpcomingRounds(db, now);
+  const { paused } = getSevenPickRuntime(db);
+  if (!paused) scheduleUpcomingRounds(db, now);
   let active = activeNetwork.get(db);
   if (!active) {
     active = new Set();
@@ -90,7 +98,7 @@ export async function tickSevenPickMaintenance(db: Db, options: SevenPickMainten
         resumeSevenPickRefund(db, round.id, now);
         continue;
       }
-      if (round.status === "risk_skipped" || (options.allowLaunch && round.status === "scheduled" && now < round.closesAt)) {
+      if (round.status === "risk_skipped" || (!paused && round.status === "scheduled" && now < round.closesAt)) {
         openSevenPickRound(db, round.id, now);
         continue;
       }

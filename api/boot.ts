@@ -37,12 +37,10 @@ if (env.isProduction) {
   const { processLoanIncomeInterception } = await import("./routers/financeRouter");
   const { PERP_MAINTENANCE_INTERVAL_MS, refreshPerpMaintenance } = await import("./perp/maintenance");
   const { SEVEN_PICK_MAINTENANCE_INTERVAL_MS, tickSevenPickMaintenance } = await import("./seven-pick/maintenance");
-  const { sevenPickLaunchReady } = await import("./seven-pick/release");
   const { refreshSevenPickSealTimestamps } = await import("./seven-pick/seal-timestamp");
   const db = getDb();
   function refreshSevenPick() {
     void tickSevenPickMaintenance(db.$client, {
-      allowLaunch: sevenPickLaunchReady(),
       onError: (error, roundId) => console.error("Seven Pick maintenance round failed", roundId, error),
     }).catch((error: unknown) => console.error("Seven Pick maintenance failed", error));
   }

@@ -29,7 +29,8 @@ const beaconFixture = {
 const db = new Database(":memory:");
 try {
   env.NODE_ENV = "test";
-  db.exec("CREATE TABLE users(id INTEGER PRIMARY KEY); INSERT INTO users VALUES(1)");
+  db.exec("CREATE TABLE users(id INTEGER PRIMARY KEY); INSERT INTO users VALUES(1); " +
+    "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);");
   db.exec(PERP_ENGINE_SCHEMA);
   db.exec(PERP_WEEKLY_SCHEMA);
   ensureSevenPickSchema(db);

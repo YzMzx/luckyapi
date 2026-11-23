@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
-import { env } from "node:process";
 import { quicknetRoundTimeMs } from "./drand";
 import type { ProofNetworkOptions } from "./proof-network";
+import { getSevenPickRuntime } from "./release";
 import { requestSevenPickTsaStamp, sevenPickTsaEvidenceInput, verifySevenPickTsaStamp, type TsaStampEvidence } from "./tsa";
 
 export type TimestampBinding = { roundId: number; commitmentHex: string; quicknetRound: number; sealedAt: number };
@@ -59,7 +59,7 @@ const RETRY_MS = 30_000;
 
 /** Best-effort worker with no participation in draw or settlement. */
 export async function refreshSevenPickSealTimestamps(db: Database.Database, options: ProofNetworkOptions = {}) {
-  if (env.SEVEN_PICK_RFC3161 !== "1" || active.has(db)) return;
+  if (active.has(db) || !getSevenPickRuntime(db).rfc3161Enabled) return;
   active.add(db);
   try {
     const now = (options.now ?? Date.now)();
@@ -79,7 +79,8 @@ export async function refreshSevenPickSealTimestamps(db: Database.Database, opti
       const evidence = await requestSevenPickTsaStamp(sevenPickSealImprint(round), options);
       const stamp = verifySevenPickSealTimestamp(round, evidence);
       db.transaction(() => {
-        if (getSevenPickSealTimestamp(db, round.roundId)) return;
+        // An in-flight request can finish after an operator disables the worker.
+        if (!getSevenPickRuntime(db).rfc3161Enabled || getSevenPickSealTimestamp(db, round.roundId)) return;
         db.prepare("INSERT INTO seven_pick_seal_timestamps (round_id,upper_bound_ms,evidence_json) VALUES (?,?,?)")
           .run(round.roundId, stamp.upperBoundMs, JSON.stringify(evidence));
       }).immediate();

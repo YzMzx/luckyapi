@@ -28,7 +28,7 @@ import {
   SevenPickInsufficientFundsError,
 } from "./wallet";
 
-import { sevenPickLaunchReady } from "./release";
+import { getSevenPickRuntime } from "./release";
 
 export class SevenPickError extends Error {
   readonly code:
@@ -166,7 +166,7 @@ export function getSevenPickSnapshot(
   db: Database.Database,
   nowMs = Date.now()
 ) {
-  const round = db.transaction(() => {
+  const { round, paused } = db.transaction(() => {
     const active = db
       .prepare<[number, number], RoundRow>(
         SELECT_ROUND +
@@ -185,13 +185,14 @@ export function getSevenPickSnapshot(
       db
         .prepare<[], RoundRow>(SELECT_ROUND + " ORDER BY opens_at DESC LIMIT 1")
         .get();
-    return row ? roundView(db, row) : null;
+    return { round: row ? roundView(db, row) : null, paused: getSevenPickRuntime(db).paused };
   })();
   return {
     name: SEVEN_PICK_NAME,
     now: nowMs,
+    paused,
     bettingEnabled:
-      sevenPickLaunchReady() &&
+      !paused &&
       round?.status === "open" &&
       nowMs >= round.opensAt &&
       nowMs < round.closesAt,
@@ -211,6 +212,7 @@ export function createSevenPickRound(
         .prepare<[number], RoundRow>(SELECT_ROUND + " WHERE opens_at=?")
         .get(opensAt);
       if (existing) return roundView(db, existing);
+      assertSevenPickNotPaused(db);
       if (!Number.isSafeInteger(nowMs) || nowMs <= 0 || nowMs > opensAt)
         throw new SevenPickError("INVALID_INPUT", "须在开盘前创建场次快照");
       const config = getSevenPickConfig(db, opensAt);
@@ -321,6 +323,7 @@ export function openSevenPickRound(
       const round = select.get(roundId);
       if (!round) throw new SevenPickError("ROUND_NOT_FOUND", "场次不存在");
       if (round.status !== "scheduled") return roundView(db, round);
+      assertSevenPickNotPaused(db);
       if (!round.enabled || nowMs < round.opensAt || nowMs >= round.closesAt)
         throw new SevenPickError("ROUND_CLOSED", "场次不在开盘时段");
       const odds = readMultipliers(round);
@@ -469,17 +472,17 @@ export function listSevenPickOrders(
   )();
 }
 
+function assertSevenPickNotPaused(db: Database.Database) {
+  if (getSevenPickRuntime(db).paused)
+    throw new SevenPickError("BETTING_DISABLED", "七星寻宝已暂停，暂不接受新投注");
+}
+
 export function placeSevenPickOrder(
   db: Database.Database,
   userId: number,
   input: unknown,
   nowMs?: number
 ): SevenPickOrder {
-  if (!sevenPickLaunchReady())
-    throw new SevenPickError(
-      "BETTING_DISABLED",
-      "七星寻宝当前未启用，暂不接受投注"
-    );
   return placeOrder(db, userId, input, nowMs);
 }
 
@@ -561,6 +564,9 @@ function placeOrder(
             );
           return orderView(db, prior);
         }
+        // Read pause under the same write lock as new-order placement. Retries
+        // above return existing receipts without accepting or charging new bets.
+        assertSevenPickNotPaused(db);
         const round = db
           .prepare<[number], RoundRow>(SELECT_ROUND + " WHERE id=?")
           .get(roundId);

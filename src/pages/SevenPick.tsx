@@ -155,7 +155,7 @@ function Selection({ items, rules, roundId, acceptingOrders, ordersInRound }: {
 
 export default function SevenPick() {
   const { user } = useMe();
-  const overview = trpc.sevenPick.overview.useQuery(undefined, { refetchInterval: (query) => query.state.data?.launchReady ? 5_000 : 30_000 });
+  const overview = trpc.sevenPick.overview.useQuery(undefined, { refetchInterval: (query) => query.state.data?.configured ? 5_000 : 30_000 });
   const [historyCursors, setHistoryCursors] = useState<number[]>([]);
   const beforeOpensAt = historyCursors.at(-1);
   const history = trpc.sevenPick.history.useQuery(beforeOpensAt ? { beforeOpensAt } : undefined, { refetchInterval: beforeOpensAt ? false : 30_000 });
@@ -183,10 +183,10 @@ export default function SevenPick() {
           <section aria-labelledby="seven-pick-rules" className="space-y-3 rounded-2xl border border-border bg-card p-5">
             <h2 id="seven-pick-rules" className="text-lg font-bold">场次与玩法</h2>
             {info.round ? <p>第 {info.round.id} 场 · {statusLabels[info.round.status] ?? info.round.status} · {beijing.format(info.round.closesAt)} 封盘 · {beijing.format(info.round.drawAt)} 目标开奖（北京时间）</p> : <p>暂无正式场次。</p>}
-            {!info.launchReady && <p className="text-sm text-muted-foreground">游戏暂未启用，当前可试选。</p>}
+            {info.paused && <p className="text-sm text-muted-foreground">后台已暂停接收新投注，已接受的投注照常开奖和结算。</p>}
             {liveRound && <p className="text-sm">固定 Quicknet 轮次：<code>{liveRound.quicknetRound}</code> · <code>{liveRound.algorithmVersion}</code></p>}
             <p className="text-sm text-muted-foreground">每场在开盘前公开绑定轮次，验签通过后开奖。RFC 3161 是可选的封盘时间凭证，不影响派奖。</p>
-            {info.launchReady && !info.configured && <p className="text-sm text-muted-foreground">当前配置未启用。</p>}
+            {!info.paused && !info.configured && <p className="text-sm text-muted-foreground">当前生效的玩法配置未启用，可试选。</p>}
             {liveRound && liveRound.status === "open" && <RoundCountdown deadline={liveRound.closesAt} serverOffset={info.now - overview.dataUpdatedAt} label="距离封盘" />}
             {liveRound && liveRound.status === "scheduled" && <RoundCountdown deadline={liveRound.opensAt} serverOffset={info.now - overview.dataUpdatedAt} label="距离开盘" />}
             {info.acceptingOrders && !user?.onboarded && <p className="text-sm">登录并完成注册后可投注。</p>}
